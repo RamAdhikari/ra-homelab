@@ -1,0 +1,64 @@
+# Make RHEL hosts trust the Vault SSH CA and create the AAP service account.
+# Additive: existing logins keep working.
+- name: Trust Vault SSH CA
+  hosts: rhel_targets
+  become: true
+  vars:
+    vault_ssh_mount: ssh-client-signer
+    ssh_ca_file: /etc/ssh/trusted-user-ca-keys.pem
+    aap_user: svc_aap
+  tasks:
+    - name: Read CA public key from Vault (unauthenticated endpoint)
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/{{ vault_ssh_mount }}/public_key"
+        return_content: true
+        ca_path: "{{ playbook_dir }}/vault-ca.pem"
+      register: ssh_ca
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fail if the response is not a public key
+      ansible.builtin.assert:
+        that: ssh_ca.content is match('^(ssh-|ecdsa-)')
+      run_once: true
+
+    - name: Service account for AAP
+      ansible.builtin.user:
+        name: "{{ aap_user }}"
+        shell: /bin/bash
+        password_lock: true
+
+    - name: Sudo for the service account
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ aap_user }}"
+        content: "{{ aap_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: visudo -cf %s
+
+    - name: Install CA public key
+      ansible.builtin.copy:
+        dest: "{{ ssh_ca_file }}"
+        content: "{{ ssh_ca.content | trim }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: reload sshd
+
+    - name: Point sshd at the CA (kept above any Match block)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*TrustedUserCAKeys\s'
+        line: "TrustedUserCAKeys {{ ssh_ca_file }}"
+        insertbefore: '^Match\s'
+        firstmatch: true
+        validate: sshd -t -f %s
+      notify: reload sshd
+
+  handlers:
+    - name: reload sshd
+      ansible.builtin.systemd:
+        name: sshd
+        state: reloaded

@@ -1,0 +1,20 @@
+# Non-secret AAP settings for the lab. Secrets come from the environment:
+#   CONTROLLER_HOST, CONTROLLER_OAUTH_TOKEN, CONTROLLER_VERIFY_SSL=false
+#   AAP_VAULT_ROLE_ID, AAP_VAULT_SECRET_ID   (phase 2 only, once Vault is up)
+controller_org: Default
+lab_inventory: homelab-rhel-lab
+
+# AAP cannot resolve the lab names (not in DNS), so it talks to Vault by IP.
+# The Vault certificate carries this IP as a SAN.
+vault_url_for_aap: https://192.168.1.29:8200
+
+lab_hosts:
+  - { name: lab-vault01.homelab.local, ip: 192.168.1.29, group: vault }
+  - { name: lab-rhel01.homelab.local, ip: 192.168.1.27, group: rhel_targets }
+  - { name: lab-rhel02.homelab.local, ip: 192.168.1.28, group: rhel_targets }
+
+signer_credential: vault-ssh-signer
+machine_credential: rhel-svc-aap-signed
+aap_ssh_user: svc_aap
+vault_ssh_mount: ssh-client-signer
+vault_ssh_role: aap-linux

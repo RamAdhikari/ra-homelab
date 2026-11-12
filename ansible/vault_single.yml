@@ -1,0 +1,83 @@
+# Single-node Vault (Raft storage, self-signed TLS) for the home lab.
+# Production uses three nodes and a CA-issued certificate: see the design doc.
+- name: Build single-node Vault
+  hosts: vault
+  become: true
+  vars:
+    # If the RHEL/10 repo path returns 404, set this to "9": the el9 package runs on RHEL 10.
+    hashicorp_repo_releasever: "10"
+  tasks:
+    - name: Add HashiCorp repo
+      ansible.builtin.yum_repository:
+        name: hashicorp
+        description: HashiCorp Stable
+        baseurl: "https://rpm.releases.hashicorp.com/RHEL/{{ hashicorp_repo_releasever }}/$basearch/stable"
+        gpgkey: https://rpm.releases.hashicorp.com/gpg
+        gpgcheck: true
+
+    - name: Install Vault and openssl
+      ansible.builtin.dnf:
+        name: [vault, openssl]
+        state: present
+
+    - name: Self-signed TLS certificate with the right SANs
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes
+          -keyout /opt/vault/tls/vault.key -out /opt/vault/tls/vault.crt
+          -subj "/CN={{ inventory_hostname }}"
+          -addext "subjectAltName=DNS:{{ inventory_hostname }},DNS:{{ inventory_hostname_short }},IP:{{ ansible_default_ipv4.address }},IP:127.0.0.1"
+        creates: /opt/vault/tls/vault.crt
+      notify: restart vault
+
+    - name: TLS file ownership
+      ansible.builtin.file:
+        path: "/opt/vault/tls/{{ item.name }}"
+        owner: vault
+        group: vault
+        mode: "{{ item.mode }}"
+      loop:
+        - { name: vault.crt, mode: "0644" }
+        - { name: vault.key, mode: "0600" }
+
+    - name: Audit log directory
+      ansible.builtin.file:
+        path: /var/log/vault
+        state: directory
+        owner: vault
+        group: vault
+        mode: "0750"
+
+    - name: Vault config
+      ansible.builtin.template:
+        src: vault.hcl.j2
+        dest: /etc/vault.d/vault.hcl
+        owner: vault
+        group: vault
+        mode: "0640"
+      notify: restart vault
+
+    - name: Open firewall
+      ansible.builtin.shell: |
+        if firewall-cmd --query-port=8200/tcp --permanent; then exit 0; fi
+        firewall-cmd --permanent --add-port=8200/tcp && firewall-cmd --reload && echo CHANGED
+      register: fw
+      changed_when: "'CHANGED' in fw.stdout"
+
+    - name: Enable and start Vault
+      ansible.builtin.systemd:
+        name: vault
+        enabled: true
+        state: started
+
+    - name: Fetch the certificate so the Mac and AAP can trust it
+      ansible.builtin.fetch:
+        src: /opt/vault/tls/vault.crt
+        dest: "{{ playbook_dir }}/vault-ca.pem"
+        flat: true
+
+  handlers:
+    - name: restart vault
+      ansible.builtin.systemd:
+        name: vault
+        state: restarted

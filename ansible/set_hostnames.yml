@@ -1,0 +1,17 @@
+# Sets each clone's hostname from the inventory name and gives every lab host
+# an /etc/hosts entry for the others (the clones are not in DNS).
+# Run: ansible-playbook -i inventory.ini set_hostnames.yml -k
+- name: Name the lab VMs
+  hosts: all
+  become: true
+  tasks:
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Hosts entries for all lab VMs
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '\s{{ item | regex_escape }}(\s|$)'
+        line: "{{ hostvars[item].ansible_host }} {{ item }} {{ item.split('.')[0] }}"
+      loop: "{{ groups['all'] }}"

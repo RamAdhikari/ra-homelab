@@ -1,0 +1,115 @@
+# AAP configuration as code for the Vault-signed SSH lab.
+#
+# Phase 1 (run any time): inventory, hosts, groups.
+# Phase 2 (runs only when AAP_VAULT_ROLE_ID and AAP_VAULT_SECRET_ID are set,
+#          i.e. after Vault is up and terraform/vault-config is applied):
+#          AAP keypair, Vault Signed SSH credential, Machine credential wired
+#          to Vault, then an ad hoc ping through the signed certificate.
+#
+#   ansible-galaxy collection install -r requirements.yml
+#   export CONTROLLER_HOST=https://aap.lab.local CONTROLLER_VERIFY_SSL=false
+#   read -s "CONTROLLER_OAUTH_TOKEN?AAP token: "; export CONTROLLER_OAUTH_TOKEN
+#   ansible-playbook configure.yml
+- name: Configure AAP for the Vault SSH lab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  # awx.awx defaults to the AWX path /api/; AAP 2.5+ serves the controller API
+  # behind the gateway at /api/controller/.
+  environment:
+    CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX: /api/controller/
+  vars_files:
+    - vars.yml
+  vars:
+    vault_role_id: "{{ lookup('env', 'AAP_VAULT_ROLE_ID') }}"
+    vault_secret_id: "{{ lookup('env', 'AAP_VAULT_SECRET_ID') }}"
+    phase2: "{{ (vault_role_id | length > 0) and (vault_secret_id | length > 0) }}"
+  tasks:
+    # ---------------------------------------------------------------- phase 1
+    - name: Inventory
+      awx.awx.inventory:
+        name: "{{ lab_inventory }}"
+        organization: "{{ controller_org }}"
+        description: RHEL 10 lab VMs for the Vault SSH CA test (managed by ra-homelab)
+        state: present
+
+    - name: Hosts
+      awx.awx.host:
+        name: "{{ item.name }}"
+        inventory: "{{ lab_inventory }}"
+        variables:
+          ansible_host: "{{ item.ip }}"
+        state: present
+      loop: "{{ lab_hosts }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Groups
+      awx.awx.group:
+        name: "{{ item }}"
+        inventory: "{{ lab_inventory }}"
+        hosts: "{{ lab_hosts | selectattr('group', 'equalto', item) | map(attribute='name') | list }}"
+        state: present
+      loop: "{{ lab_hosts | map(attribute='group') | unique | list }}"
+
+    - name: Phase 2 skipped
+      ansible.builtin.debug:
+        msg: Vault role_id/secret_id not set. Inventory done; credentials come after Vault is configured.
+      when: not phase2
+
+    # ---------------------------------------------------------------- phase 2
+    - name: Credentials and end-to-end test
+      when: phase2
+      block:
+        - name: AAP keypair (kept out of git by .gitignore)
+          ansible.builtin.command:
+            cmd: ssh-keygen -t ed25519 -N '' -C aap-controller -f {{ playbook_dir }}/aap_key
+            creates: "{{ playbook_dir }}/aap_key"
+
+        - name: Vault Signed SSH credential
+          awx.awx.credential:
+            name: "{{ signer_credential }}"
+            organization: "{{ controller_org }}"
+            credential_type: HashiCorp Vault Signed SSH
+            inputs:
+              url: "{{ vault_url_for_aap }}"
+              role_id: "{{ vault_role_id }}"
+              secret_id: "{{ vault_secret_id }}"
+              cacert: "{{ lookup('file', playbook_dir + '/../ansible/vault-ca.pem') }}"
+              default_auth_path: approle
+          no_log: true
+
+        - name: Machine credential
+          awx.awx.credential:
+            name: "{{ machine_credential }}"
+            organization: "{{ controller_org }}"
+            credential_type: Machine
+            inputs:
+              username: "{{ aap_ssh_user }}"
+              ssh_key_data: "{{ lookup('file', playbook_dir + '/aap_key') }}"
+          no_log: true
+
+        - name: Fill the certificate field from Vault
+          awx.awx.credential_input_source:
+            target_credential: "{{ machine_credential }}"
+            input_field_name: ssh_public_key_data
+            source_credential: "{{ signer_credential }}"
+            metadata:
+              public_key: "{{ lookup('file', playbook_dir + '/aap_key.pub') }}"
+              secret_path: "{{ vault_ssh_mount }}"
+              role: "{{ vault_ssh_role }}"
+              valid_principals: "{{ aap_ssh_user }}"
+
+        - name: Ad hoc ping through the Vault-signed certificate
+          awx.awx.ad_hoc_command:
+            inventory: "{{ lab_inventory }}"
+            credential: "{{ machine_credential }}"
+            module_name: ping
+            limit: rhel_targets
+            wait: true
+            timeout: 300
+          register: adhoc
+
+        - name: Result
+          ansible.builtin.debug:
+            msg: "Ad hoc job {{ adhoc.id | default('?') }} status: {{ adhoc.status | default('unknown') }}"

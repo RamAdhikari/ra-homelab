@@ -1,0 +1,10 @@
+# Non-secret lab values. Passwords: PKR_VAR_vsphere_password, PKR_VAR_build_password.
+vsphere_server = "vcsa.homelab.local"
+vsphere_user   = "Administrator@HOMELAB.LOCAL"
+datacenter     = "Virtual_DC"
+cluster        = "My_Cluster"
+esxi_host      = "192.168.1.155"
+datastore      = "LocalDS"
+network        = "VM Network"
+folder         = "Templates"
+iso_path       = "[LocalDS] iso/rhel-10.1-x86_64-dvd.iso"

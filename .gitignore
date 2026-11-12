@@ -1,0 +1,16 @@
+# secrets and state never go in git
+.env
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+*.auto.tfvars
+secrets.*
+*.pem
+*.key
+aap_key
+aap_key.pub
+aap_key-cert.pub
+packer_cache/
+*.iso
+.DS_Store
