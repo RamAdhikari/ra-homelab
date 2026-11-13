@@ -1,0 +1,28 @@
+# End-to-end proof: an AAP ad hoc command logs in to the targets as svc_aap
+# using only the Vault-signed certificate.
+# Credentials: homelab-aap-api
+- name: Verify Vault-signed SSH from AAP
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  environment:
+    CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX: /api/controller/
+  tasks:
+    - name: Ad hoc "id -un" on the targets with the signed credential
+      awx.awx.ad_hoc_command:
+        inventory: "{{ lab_inventory }}"
+        credential: "{{ machine_credential }}"
+        module_name: command
+        module_args: id -un
+        limit: rhel_targets
+        wait: true
+        timeout: 300
+      register: adhoc
+
+    - name: It succeeded
+      ansible.builtin.assert:
+        that: adhoc.status | default('') == 'successful'
+        fail_msg: "Ad hoc job {{ adhoc.id | default('?') }} ended {{ adhoc.status | default('unknown') }}. Open it in AAP for the per-host error."
+        success_msg: "Ad hoc job {{ adhoc.id }} logged in as {{ aap_ssh_user }} with a Vault-signed certificate."

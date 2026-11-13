@@ -1,0 +1,42 @@
+- name: Tool directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ hc_tools_dir }}"
+    - "{{ hc_tools_dir }}/tf-plugins"
+    - "{{ hc_tools_dir }}/packer-plugins"
+
+- name: Download HashiCorp release zips (SHA256 verified)
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/{{ item.name }}/{{ item.version }}/{{ item.name }}_{{ item.version }}_linux_amd64.zip"
+    dest: "{{ hc_tools_dir }}/{{ item.name }}_{{ item.version }}_linux_amd64.zip"
+    checksum: "sha256:https://releases.hashicorp.com/{{ item.name }}/{{ item.version }}/{{ item.name }}_{{ item.version }}_SHA256SUMS"
+    mode: "0644"
+  loop: "{{ hc_tools }}"
+
+- name: Extract (python zipfile, so no unzip binary is needed)
+  ansible.builtin.command:
+    cmd: >-
+      python3 -m zipfile -e
+      {{ hc_tools_dir }}/{{ item.name }}_{{ item.version }}_linux_amd64.zip
+      {{ hc_tools_dir }}/{{ item.name }}-{{ item.version }}
+    creates: "{{ hc_tools_dir }}/{{ item.name }}-{{ item.version }}/{{ item.name }}"
+  loop: "{{ hc_tools }}"
+
+- name: Make binaries executable
+  ansible.builtin.file:
+    path: "{{ hc_tools_dir }}/{{ item.name }}-{{ item.version }}/{{ item.name }}"
+    mode: "0755"
+  loop: "{{ hc_tools }}"
+
+- name: Tool paths
+  ansible.builtin.set_fact:
+    packer_bin: "{{ hc_tools_dir }}/packer-{{ (hc_tools | selectattr('name', 'equalto', 'packer') | first).version }}/packer"
+    terraform_bin: "{{ hc_tools_dir }}/terraform-{{ (hc_tools | selectattr('name', 'equalto', 'terraform') | first).version }}/terraform"
+    hc_env:
+      CHECKPOINT_DISABLE: "1"
+      TF_IN_AUTOMATION: "1"
+      TF_PLUGIN_CACHE_DIR: "{{ hc_tools_dir }}/tf-plugins"
+      PACKER_PLUGIN_PATH: "{{ hc_tools_dir }}/packer-plugins"

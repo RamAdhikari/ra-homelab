@@ -1,0 +1,109 @@
+# Configures the Vault SSH CA and AppRole with Terraform, then creates the AAP
+# credentials that fetch a signed certificate at job launch.
+# Credentials: homelab-labadmin, homelab-aap-api
+- name: Collect Vault root token and CA certificate
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  tasks:
+    - name: Init material
+      ansible.builtin.slurp:
+        src: "{{ vault_init_file }}"
+      register: vault_init_raw
+      no_log: true
+
+    - name: Vault TLS certificate
+      ansible.builtin.slurp:
+        src: /opt/vault/tls/vault.crt
+      register: vault_cert_raw
+
+- name: Configure Vault and AAP
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  vars:
+    vault_host: "{{ groups['vault'][0] }}"
+    vault_addr: "https://{{ hostvars[vault_host].ansible_host }}:8200"
+    vault_ca_file: "{{ hc_tools_dir }}/vault-ca.pem"
+    vault_root_token: "{{ (hostvars[vault_host].vault_init_raw.content | b64decode | from_json).root_token }}"
+  environment:
+    CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX: /api/controller/
+  roles:
+    - hashicorp_tools
+  tasks:
+    - name: Vault CA file for Terraform and uri
+      ansible.builtin.copy:
+        content: "{{ hostvars[vault_host].vault_cert_raw.content | b64decode }}"
+        dest: "{{ vault_ca_file }}"
+        mode: "0644"
+
+    - name: Terraform vault-config
+      ansible.builtin.include_tasks: tasks/terraform.yml
+      vars:
+        tf_dir: "{{ playbook_dir }}/../terraform/vault-config"
+        tf_state: "{{ tfstate_dir }}/vault-config.tfstate"
+        tf_vars:
+          - "aap_controller_cidrs={{ aap_controller_cidrs | to_json }}"
+        tf_env:
+          VAULT_ADDR: "{{ vault_addr }}"
+          VAULT_TOKEN: "{{ vault_root_token }}"
+          VAULT_CACERT: "{{ vault_ca_file }}"
+
+    - name: New AppRole secret_id for AAP
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/auth/approle/role/aap-controller/secret-id"
+        method: POST
+        headers: { X-Vault-Token: "{{ vault_root_token }}" }
+        ca_path: "{{ vault_ca_file }}"
+      register: secret_id
+      no_log: true
+
+    - name: Fresh AAP keypair
+      ansible.builtin.shell: |
+        rm -f {{ hc_tools_dir }}/aap_key {{ hc_tools_dir }}/aap_key.pub
+        ssh-keygen -q -t ed25519 -N '' -C aap-controller -f {{ hc_tools_dir }}/aap_key
+      changed_when: true
+
+    - name: Vault Signed SSH credential
+      awx.awx.credential:
+        name: "{{ signer_credential }}"
+        organization: "{{ controller_org }}"
+        credential_type: HashiCorp Vault Signed SSH
+        inputs:
+          url: "{{ vault_addr }}"
+          role_id: "{{ tf_outputs.aap_role_id.value }}"
+          secret_id: "{{ secret_id.json.data.secret_id }}"
+          cacert: "{{ lookup('file', vault_ca_file) }}"
+          default_auth_path: approle
+      no_log: true
+
+    - name: Machine credential for svc_aap
+      awx.awx.credential:
+        name: "{{ machine_credential }}"
+        organization: "{{ controller_org }}"
+        credential_type: Machine
+        inputs:
+          username: "{{ aap_ssh_user }}"
+          ssh_key_data: "{{ lookup('file', hc_tools_dir ~ '/aap_key') }}"
+      no_log: true
+
+    - name: Certificate field filled from Vault at launch
+      awx.awx.credential_input_source:
+        target_credential: "{{ machine_credential }}"
+        input_field_name: ssh_public_key_data
+        source_credential: "{{ signer_credential }}"
+        metadata:
+          public_key: "{{ lookup('file', hc_tools_dir ~ '/aap_key.pub') }}"
+          secret_path: "{{ vault_ssh_mount }}"
+          role: "{{ vault_ssh_role }}"
+          valid_principals: "{{ aap_ssh_user }}"
+
+    - name: Remove the private key from the job container
+      ansible.builtin.file:
+        path: "{{ hc_tools_dir }}/{{ item }}"
+        state: absent
+      loop: [aap_key, aap_key.pub]

@@ -1,0 +1,52 @@
+# Hostnames, /etc/hosts, and Red Hat registration (the clones have no repos until registered).
+# Credentials: homelab-labadmin (Machine), homelab-lab-secrets
+- name: Bootstrap lab VMs
+  hosts: vault:rhel_targets
+  become: true
+  vars_files:
+    - ../vars/lab.yml
+  pre_tasks:
+    - name: Red Hat login is in the lab secrets credential
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'RHSM_USERNAME') | length > 0
+          - lookup('env', 'RHSM_PASSWORD') | length > 0
+        fail_msg: Fill in rhsm_username and rhsm_password on the homelab-lab-secrets credential.
+      run_once: true
+      delegate_to: localhost
+      become: false
+  tasks:
+    - name: Hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Hosts entries for every lab VM (they are not in DNS)
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '\s{{ item | regex_escape }}(\s|$)'
+        line: "{{ hostvars[item].ansible_host }} {{ item }} {{ item.split('.')[0] }}"
+      loop: "{{ groups['vault'] + groups['rhel_targets'] }}"
+
+    - name: Registration status
+      ansible.builtin.command: subscription-manager identity
+      register: rhsm_identity
+      changed_when: false
+      failed_when: false
+
+    - name: Register with Red Hat
+      ansible.builtin.command:
+        argv:
+          - subscription-manager
+          - register
+          - --username
+          - "{{ lookup('env', 'RHSM_USERNAME') }}"
+          - --password
+          - "{{ lookup('env', 'RHSM_PASSWORD') }}"
+      when: rhsm_identity.rc != 0
+      no_log: true
+
+    - name: BaseOS and AppStream repos are enabled
+      ansible.builtin.command: dnf -q repolist --enabled
+      register: repos
+      changed_when: false
+      failed_when: "'baseos' not in repos.stdout or 'appstream' not in repos.stdout"

@@ -1,0 +1,25 @@
+# Shared, non-secret settings for every playbook. Secrets come only from AAP credentials.
+lab_domain: homelab.local
+
+# AAP objects (created by aap/seed.yml)
+controller_org: Default
+lab_inventory: homelab-rhel-lab
+signer_credential: vault-ssh-signer
+machine_credential: rhel-svc-aap-signed
+
+# Terraform VM name => inventory group
+lab_vm_groups:
+  lab-vault01: vault
+  lab-rhel01: rhel_targets
+  lab-rhel02: rhel_targets
+
+# Terraform state survives between jobs only on a host path exposed to job
+# containers (aap/seed.yml adds it to "Paths to expose to isolated jobs").
+tfstate_dir: /var/lib/homelab-tfstate
+
+# Vault SSH CA
+vault_ssh_mount: ssh-client-signer
+vault_ssh_role: aap-linux
+aap_ssh_user: svc_aap
+aap_controller_cidrs: ["192.168.1.0/24"]
+vault_init_file: /root/vault-init.json

@@ -1,6 +1,8 @@
 # Clone RHEL 10 VMs from the Packer template: one Vault node and two SSH targets.
 terraform {
   required_version = ">= 1.4.0"
+  # State path is passed at init: -backend-config=path=/var/lib/homelab-tfstate/rhel-vms.tfstate
+  backend "local" {}
   required_providers {
     vsphere = {
       source  = "hashicorp/vsphere"

@@ -1,0 +1,6 @@
+# Pinned HashiCorp CLIs, downloaded into the job container at run time
+# (checksum-verified), so the default execution environment works unchanged.
+hc_tools_dir: /tmp/hc-tools
+hc_tools:
+  - { name: packer, version: "1.11.2" }
+  - { name: terraform, version: "1.9.8" }

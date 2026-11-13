@@ -1,53 +1,55 @@
-# Make RHEL hosts trust the Vault SSH CA and create the AAP service account.
-# Additive: existing logins keep working.
-- name: Trust Vault SSH CA
-  hosts: rhel_targets
-  become: true
-  vars:
-    vault_ssh_mount: ssh-client-signer
-    ssh_ca_file: /etc/ssh/trusted-user-ca-keys.pem
-    aap_user: svc_aap
+# Targets trust the Vault SSH CA and get the svc_aap account. Additive: other logins keep working.
+# Credentials: homelab-labadmin
+- name: Read the CA public key from Vault
+  hosts: vault
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
   tasks:
-    - name: Read CA public key from Vault (unauthenticated endpoint)
+    - name: CA public key (unauthenticated endpoint)
       ansible.builtin.uri:
-        url: "{{ vault_addr }}/v1/{{ vault_ssh_mount }}/public_key"
+        url: "https://127.0.0.1:8200/v1/{{ vault_ssh_mount }}/public_key"
+        ca_path: /opt/vault/tls/vault.crt
         return_content: true
-        ca_path: "{{ playbook_dir }}/vault-ca.pem"
       register: ssh_ca
-      delegate_to: localhost
-      become: false
-      run_once: true
 
-    - name: Fail if the response is not a public key
+    - name: Looks like a public key
       ansible.builtin.assert:
         that: ssh_ca.content is match('^(ssh-|ecdsa-)')
-      run_once: true
 
+- name: Trust the CA on the targets
+  hosts: rhel_targets
+  become: true
+  vars_files:
+    - ../vars/lab.yml
+  vars:
+    ssh_ca_file: /etc/ssh/trusted-user-ca-keys.pem
+  tasks:
     - name: Service account for AAP
       ansible.builtin.user:
-        name: "{{ aap_user }}"
+        name: "{{ aap_ssh_user }}"
         shell: /bin/bash
         password_lock: true
 
     - name: Sudo for the service account
       ansible.builtin.copy:
-        dest: "/etc/sudoers.d/{{ aap_user }}"
-        content: "{{ aap_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        dest: "/etc/sudoers.d/{{ aap_ssh_user }}"
+        content: "{{ aap_ssh_user }} ALL=(ALL) NOPASSWD: ALL\n"
         owner: root
         group: root
         mode: "0440"
         validate: visudo -cf %s
 
-    - name: Install CA public key
+    - name: CA public key
       ansible.builtin.copy:
         dest: "{{ ssh_ca_file }}"
-        content: "{{ ssh_ca.content | trim }}\n"
+        content: "{{ hostvars[groups['vault'][0]].ssh_ca.content | trim }}\n"
         owner: root
         group: root
         mode: "0644"
       notify: reload sshd
 
-    - name: Point sshd at the CA (kept above any Match block)
+    - name: sshd trusts the CA (above any Match block)
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^#?\s*TrustedUserCAKeys\s'

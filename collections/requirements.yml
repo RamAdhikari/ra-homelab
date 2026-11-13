@@ -1,0 +1,4 @@
+# Installed by AAP on project sync (needs the Galaxy credential on the organisation).
+# awx.awx is the upstream of ansible.controller; same modules, no Automation Hub token needed.
+collections:
+  - name: awx.awx

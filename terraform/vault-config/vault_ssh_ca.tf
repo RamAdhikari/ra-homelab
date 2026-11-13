@@ -3,6 +3,8 @@
 #   export VAULT_CACERT=../../ansible/vault-ca.pem
 #   export VAULT_TOKEN=<admin or root token>
 terraform {
+  # State path is passed at init: -backend-config=path=/var/lib/homelab-tfstate/vault-config.tfstate
+  backend "local" {}
   required_providers {
     vault = {
       source  = "hashicorp/vault"

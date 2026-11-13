@@ -1,0 +1,143 @@
+# One-time AAP configuration as code for the ra-homelab project.
+# Creates: the "Homelab lab secrets" credential type, the project, the
+# inventory, seven job templates and the end-to-end workflow, and exposes the
+# Terraform state directory to job containers.
+#
+# Run once from any machine with the awx.awx collection, or later as an AAP job:
+#   export CONTROLLER_HOST=https://aap.lab.local CONTROLLER_VERIFY_SSL=false
+#   read -s "CONTROLLER_OAUTH_TOKEN?AAP token: "; export CONTROLLER_OAUTH_TOKEN; echo
+#   ansible-playbook aap/seed.yml
+#
+# Secret-bearing credentials are created by you in the UI (names below). The
+# play creates everything it can, then stops with a list if any are missing.
+- name: Seed AAP for ra-homelab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  vars:
+    project_name: ra-homelab
+    scm_url: https://github.com/RamAdhikari/ra-homelab.git
+    scm_branch: main
+    scm_credential: homelab-github   # set to "" if the repo is public
+    workflow_name: homelab - Vault SSH lab (end to end)
+    controller_api: "{{ lookup('env', 'CONTROLLER_HOST') | regex_replace('/$', '') }}/api/controller/v2"
+    api_headers:
+      Authorization: "Bearer {{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') }}"
+    required_credentials:
+      - { name: homelab-vcenter, type: VMware vCenter }
+      - { name: homelab-lab-secrets, type: Homelab lab secrets }
+      - { name: homelab-labadmin, type: Machine (username labadmin + password) }
+      - { name: homelab-aap-api, type: Red Hat Ansible Automation Platform (host + token) }
+    job_templates:
+      - { id: build, name: "homelab 10 - build RHEL 10 template", playbook: playbooks/10_build_template.yml, creds: [homelab-vcenter, homelab-lab-secrets], ask_vars: true }
+      - { id: provision, name: "homelab 20 - provision VMs", playbook: playbooks/20_provision_vms.yml, creds: [homelab-vcenter, homelab-aap-api] }
+      - { id: bootstrap, name: "homelab 30 - bootstrap hosts", playbook: playbooks/30_bootstrap_hosts.yml, creds: [homelab-labadmin, homelab-lab-secrets] }
+      - { id: vault_install, name: "homelab 40 - install Vault", playbook: playbooks/40_vault_install.yml, creds: [homelab-labadmin] }
+      - { id: vault_configure, name: "homelab 50 - configure Vault SSH CA", playbook: playbooks/50_vault_configure.yml, creds: [homelab-labadmin, homelab-aap-api] }
+      - { id: ca_trust, name: "homelab 60 - trust SSH CA on targets", playbook: playbooks/60_ssh_ca_trust.yml, creds: [homelab-labadmin] }
+      - { id: verify, name: "homelab 70 - verify signed SSH", playbook: playbooks/70_verify.yml, creds: [homelab-aap-api] }
+  environment:
+    CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX: /api/controller/
+  tasks:
+    - name: Credential type for lab secrets
+      awx.awx.credential_type:
+        name: Homelab lab secrets
+        kind: cloud
+        description: Template build password and Red Hat subscription login for ra-homelab jobs
+        inputs:
+          fields:
+            - { id: build_password, type: string, label: labadmin password baked into the template, secret: true }
+            - { id: rhsm_username, type: string, label: Red Hat login }
+            - { id: rhsm_password, type: string, label: Red Hat password, secret: true }
+          required: [build_password, rhsm_username, rhsm_password]
+        injectors:
+          env:
+            PKR_VAR_build_password: !unsafe "{{ build_password }}"
+            RHSM_USERNAME: !unsafe "{{ rhsm_username }}"
+            RHSM_PASSWORD: !unsafe "{{ rhsm_password }}"
+        state: present
+
+    - name: Current job isolation paths
+      ansible.builtin.uri:
+        url: "{{ controller_api }}/settings/jobs/"
+        headers: "{{ api_headers }}"
+        validate_certs: false
+      register: job_settings
+
+    - name: Expose the Terraform state directory to job containers
+      awx.awx.settings:
+        name: AWX_ISOLATION_SHOW_PATHS
+        value: "{{ (job_settings.json.AWX_ISOLATION_SHOW_PATHS | default([], true) + [tfstate_dir ~ ':' ~ tfstate_dir ~ ':Z']) | unique }}"
+
+    - name: Inventory
+      awx.awx.inventory:
+        name: "{{ lab_inventory }}"
+        organization: "{{ controller_org }}"
+        description: RHEL 10 lab VMs (hosts written by "homelab 20 - provision VMs")
+        state: present
+
+    - name: Which secret-bearing credentials exist
+      ansible.builtin.uri:
+        url: "{{ controller_api }}/credentials/?name={{ item.name | urlencode }}"
+        headers: "{{ api_headers }}"
+        validate_certs: false
+      register: cred_lookup
+      loop: "{{ required_credentials + ([{'name': scm_credential, 'type': 'Source Control (GitHub PAT)'}] if scm_credential else []) }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Stop until they are created in the UI
+      ansible.builtin.fail:
+        msg: >-
+          Create these credentials in AAP (organisation {{ controller_org }}), then rerun:
+          {{ cred_lookup.results | selectattr('json.count', 'equalto', 0) | map(attribute='item') | map('to_json') | join(', ') }}
+      when: cred_lookup.results | selectattr('json.count', 'equalto', 0) | list | length > 0
+
+    - name: Project
+      awx.awx.project:
+        name: "{{ project_name }}"
+        organization: "{{ controller_org }}"
+        scm_type: git
+        scm_url: "{{ scm_url }}"
+        scm_branch: "{{ scm_branch }}"
+        credential: "{{ scm_credential if scm_credential else omit }}"
+        scm_update_on_launch: true
+        scm_clean: true
+        wait: true
+        state: present
+
+    - name: Job templates
+      awx.awx.job_template:
+        name: "{{ item.name }}"
+        organization: "{{ controller_org }}"
+        project: "{{ project_name }}"
+        inventory: "{{ lab_inventory }}"
+        playbook: "{{ item.playbook }}"
+        credentials: "{{ item.creds }}"
+        ask_variables_on_launch: "{{ item.ask_vars | default(false) }}"
+        state: present
+      loop: "{{ job_templates }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: End-to-end workflow
+      awx.awx.workflow_job_template:
+        name: "{{ workflow_name }}"
+        organization: "{{ controller_org }}"
+        description: Template, VMs, Vault, SSH CA, AAP credentials, verification
+        ask_variables_on_launch: true
+        destroy_current_nodes: true
+        workflow_nodes: >-
+          {%- set nodes = [] -%}
+          {%- for jt in job_templates -%}
+          {%- set nxt = job_templates[loop.index] if not loop.last else none -%}
+          {%- set _ = nodes.append({
+                'identifier': jt.id,
+                'unified_job_template': {'name': jt.name, 'type': 'job_template', 'organization': {'name': controller_org}},
+                'related': {'success_nodes': ([{'identifier': nxt.id}] if nxt else [])}
+              }) -%}
+          {%- endfor -%}
+          {{ nodes }}
+        state: present

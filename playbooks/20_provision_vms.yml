@@ -1,0 +1,60 @@
+# Clones the lab VMs with Terraform, then writes their IPs into the AAP inventory.
+# Credentials: homelab-vcenter, homelab-aap-api
+- name: Provision lab VMs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  environment:
+    CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX: /api/controller/
+  pre_tasks:
+    - name: Required credentials are attached
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'VMWARE_PASSWORD') | length > 0
+          - lookup('env', 'CONTROLLER_HOST') | length > 0
+        fail_msg: Attach the homelab-vcenter and homelab-aap-api credentials to this job template.
+  roles:
+    - hashicorp_tools
+  tasks:
+    - name: Terraform rhel-vms
+      ansible.builtin.include_tasks: tasks/terraform.yml
+      vars:
+        tf_dir: "{{ playbook_dir }}/../terraform/rhel-vms"
+        tf_state: "{{ tfstate_dir }}/rhel-vms.tfstate"
+        tf_vars:
+          - "vsphere_server={{ lookup('env', 'VMWARE_HOST') }}"
+          - "vsphere_user={{ lookup('env', 'VMWARE_USER') }}"
+        tf_env:
+          TF_VAR_vsphere_password: "{{ lookup('env', 'VMWARE_PASSWORD') }}"
+
+    - name: VM addresses
+      ansible.builtin.set_fact:
+        vm_ips: "{{ tf_outputs.vm_ips.value }}"
+
+    - name: Every VM has an IPv4 address
+      ansible.builtin.assert:
+        that: item.value is match('^\d+\.\d+\.\d+\.\d+$')
+        fail_msg: "{{ item.key }} has no IPv4 address yet ({{ item.value }}). Check VMware Tools and DHCP."
+        quiet: true
+      loop: "{{ vm_ips | dict2items }}"
+
+    - name: Hosts in the AAP inventory
+      awx.awx.host:
+        name: "{{ item.key }}.{{ lab_domain }}"
+        inventory: "{{ lab_inventory }}"
+        variables:
+          ansible_host: "{{ item.value }}"
+        state: present
+      loop: "{{ vm_ips | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} = {{ item.value }}"
+
+    - name: Groups in the AAP inventory
+      awx.awx.group:
+        name: "{{ item }}"
+        inventory: "{{ lab_inventory }}"
+        hosts: "{{ lab_vm_groups | dict2items | selectattr('value', 'equalto', item) | map(attribute='key') | map('regex_replace', '$', '.' ~ lab_domain) | list }}"
+        state: present
+      loop: "{{ lab_vm_groups.values() | unique | list }}"

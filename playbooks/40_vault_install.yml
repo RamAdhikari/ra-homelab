@@ -1,0 +1,207 @@
+# Single-node Vault on lab-vault01: install, TLS, init, unseal, audit.
+# LAB ONLY: the unseal key and root token are kept in /root/vault-init.json on
+# the Vault VM, and a boot service unseals from it. Never do this in production.
+# Credentials: homelab-labadmin
+- name: Install and initialise Vault
+  hosts: vault
+  become: true
+  vars_files:
+    - ../vars/lab.yml
+  vars:
+    hashicorp_repo_releasever: "10"
+    vault_local: https://127.0.0.1:8200
+    vault_tls_ca: /opt/vault/tls/vault.crt
+  tasks:
+    - name: HashiCorp repo
+      ansible.builtin.yum_repository:
+        name: hashicorp
+        description: HashiCorp Stable
+        baseurl: "https://rpm.releases.hashicorp.com/RHEL/{{ hashicorp_repo_releasever }}/$basearch/stable"
+        gpgkey: https://rpm.releases.hashicorp.com/gpg
+        gpgcheck: true
+
+    - name: Packages
+      ansible.builtin.dnf:
+        name: [vault, openssl, curl]
+        state: present
+
+    - name: Self-signed TLS certificate (SANs = FQDN, short name, IP, loopback)
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes
+          -keyout /opt/vault/tls/vault.key -out /opt/vault/tls/vault.crt
+          -subj "/CN={{ inventory_hostname }}"
+          -addext "subjectAltName=DNS:{{ inventory_hostname }},DNS:{{ inventory_hostname_short }},IP:{{ ansible_host }},IP:127.0.0.1"
+        creates: /opt/vault/tls/vault.crt
+      notify: restart vault
+
+    - name: TLS file ownership
+      ansible.builtin.file:
+        path: "/opt/vault/tls/{{ item.name }}"
+        owner: vault
+        group: vault
+        mode: "{{ item.mode }}"
+      loop:
+        - { name: vault.crt, mode: "0644" }
+        - { name: vault.key, mode: "0600" }
+
+    - name: Audit log directory
+      ansible.builtin.file:
+        path: /var/log/vault
+        state: directory
+        owner: vault
+        group: vault
+        mode: "0750"
+
+    - name: Vault config
+      ansible.builtin.template:
+        src: vault.hcl.j2
+        dest: /etc/vault.d/vault.hcl
+        owner: vault
+        group: vault
+        mode: "0640"
+      notify: restart vault
+
+    - name: Firewall port 8200
+      ansible.builtin.shell: |
+        if firewall-cmd --query-port=8200/tcp --permanent; then exit 0; fi
+        firewall-cmd --permanent --add-port=8200/tcp && firewall-cmd --reload && echo CHANGED
+      register: fw
+      changed_when: "'CHANGED' in fw.stdout"
+
+    - name: Vault service
+      ansible.builtin.systemd:
+        name: vault
+        enabled: true
+        state: started
+
+    - name: Apply any pending restart now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for the API
+      ansible.builtin.uri:
+        url: "{{ vault_local }}/v1/sys/seal-status"
+        ca_path: "{{ vault_tls_ca }}"
+      register: seal
+      until: seal.status == 200
+      retries: 30
+      delay: 2
+
+    - name: Initialise (1 key share, lab only)
+      ansible.builtin.uri:
+        url: "{{ vault_local }}/v1/sys/init"
+        method: PUT
+        body_format: json
+        body: { secret_shares: 1, secret_threshold: 1 }
+        ca_path: "{{ vault_tls_ca }}"
+      register: vault_init_result
+      when: not seal.json.initialized
+      no_log: true
+
+    - name: Keep init material on the Vault VM (lab only)
+      ansible.builtin.copy:
+        content: "{{ vault_init_result.json | to_nice_json }}"
+        dest: "{{ vault_init_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: vault_init_result is not skipped
+      no_log: true
+
+    - name: Read init material
+      ansible.builtin.slurp:
+        src: "{{ vault_init_file }}"
+      register: vault_init_raw
+      no_log: true
+
+    - name: Init facts
+      ansible.builtin.set_fact:
+        vault_unseal_key: "{{ (vault_init_raw.content | b64decode | from_json).keys_base64[0] }}"
+        vault_root_token: "{{ (vault_init_raw.content | b64decode | from_json).root_token }}"
+      no_log: true
+
+    - name: Seal status
+      ansible.builtin.uri:
+        url: "{{ vault_local }}/v1/sys/seal-status"
+        ca_path: "{{ vault_tls_ca }}"
+      register: seal
+
+    - name: Unseal
+      ansible.builtin.uri:
+        url: "{{ vault_local }}/v1/sys/unseal"
+        method: PUT
+        body_format: json
+        body: { key: "{{ vault_unseal_key }}" }
+        ca_path: "{{ vault_tls_ca }}"
+      when: seal.json.sealed
+      changed_when: true
+      no_log: true
+
+    - name: Boot-time unseal script (lab only)
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/vault-lab-unseal
+        owner: root
+        group: root
+        mode: "0700"
+        content: |
+          #!/bin/bash
+          # LAB ONLY: unseals Vault at boot from {{ vault_init_file }}.
+          CA={{ vault_tls_ca }}; URL={{ vault_local }}
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$CA" "$URL/v1/sys/health")
+            [ "$code" = 200 ] && exit 0
+            [ "$code" = 503 ] && break
+            sleep 2
+          done
+          key=$(python3 -c 'import json;print(json.load(open("{{ vault_init_file }}"))["keys_base64"][0])')
+          curl -s --cacert "$CA" -X PUT -d "{\"key\":\"$key\"}" "$URL/v1/sys/unseal" >/dev/null
+
+    - name: Boot-time unseal service (lab only)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/vault-lab-unseal.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Unseal Vault at boot (lab only)
+          After=vault.service
+          Requires=vault.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/vault-lab-unseal
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable boot-time unseal
+      ansible.builtin.systemd:
+        name: vault-lab-unseal
+        enabled: true
+        daemon_reload: true
+
+    - name: Audit devices
+      ansible.builtin.uri:
+        url: "{{ vault_local }}/v1/sys/audit"
+        headers: { X-Vault-Token: "{{ vault_root_token }}" }
+        ca_path: "{{ vault_tls_ca }}"
+      register: audit
+      no_log: true
+
+    - name: File audit device
+      ansible.builtin.uri:
+        url: "{{ vault_local }}/v1/sys/audit/file"
+        method: PUT
+        body_format: json
+        body: { type: file, options: { file_path: /var/log/vault/audit.log } }
+        headers: { X-Vault-Token: "{{ vault_root_token }}" }
+        ca_path: "{{ vault_tls_ca }}"
+        status_code: [200, 204]
+      when: "'file/' not in audit.json"
+      changed_when: true
+      no_log: true
+
+  handlers:
+    - name: restart vault
+      ansible.builtin.systemd:
+        name: vault
+        state: restarted

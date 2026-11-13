@@ -1,0 +1,57 @@
+# Runs one Terraform stack: init (state on the exposed host path), plan, apply
+# only when there are changes, then exposes outputs as tf_outputs.
+# Inputs: tf_dir, tf_state, tf_vars (list of "name=value"), tf_env (dict)
+- name: State directory is reachable from the job container
+  ansible.builtin.file:
+    path: "{{ tfstate_dir }}"
+    state: directory
+  register: tfstate_check
+  ignore_errors: true
+
+- name: Stop with a clear message if it is not
+  ansible.builtin.fail:
+    msg: >-
+      {{ tfstate_dir }} is not writable inside the job. Create it on the AAP
+      execution node and expose it to jobs (README, one-time setup step 3).
+  when: tfstate_check is failed
+
+- name: terraform init
+  ansible.builtin.command:
+    argv:
+      - "{{ terraform_bin }}"
+      - init
+      - -input=false
+      - -reconfigure
+      - "-backend-config=path={{ tf_state }}"
+    chdir: "{{ tf_dir }}"
+  environment: "{{ hc_env | combine(tf_env | default({})) }}"
+  changed_when: false
+
+- name: terraform plan
+  ansible.builtin.command:
+    argv: "{{ [terraform_bin, 'plan', '-input=false', '-detailed-exitcode', '-out=tfplan'] + (tf_vars | default([]) | map('regex_replace', '^', '-var=') | list) }}"
+    chdir: "{{ tf_dir }}"
+  environment: "{{ hc_env | combine(tf_env | default({})) }}"
+  register: tf_plan
+  failed_when: tf_plan.rc not in [0, 2]
+  changed_when: false
+
+- name: terraform apply
+  ansible.builtin.command:
+    argv: ["{{ terraform_bin }}", apply, -input=false, tfplan]
+    chdir: "{{ tf_dir }}"
+  environment: "{{ hc_env | combine(tf_env | default({})) }}"
+  when: tf_plan.rc == 2
+  changed_when: true
+
+- name: terraform output
+  ansible.builtin.command:
+    argv: ["{{ terraform_bin }}", output, -json]
+    chdir: "{{ tf_dir }}"
+  environment: "{{ hc_env | combine(tf_env | default({})) }}"
+  register: tf_out
+  changed_when: false
+
+- name: Outputs
+  ansible.builtin.set_fact:
+    tf_outputs: "{{ tf_out.stdout | from_json }}"
