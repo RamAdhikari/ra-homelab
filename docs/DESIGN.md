@@ -423,6 +423,7 @@ share, self-signed TLS, whole-subnet AppRole binding, `0777` state folder,
 | Job 20: AAP API timed out | Rootless Podman 5.6: host IP loops back; AAP host `/etc/hosts` maps the name to 127.0.0.1 and a stale .33 | `homelab-aap-api` host `https://host.containers.internal` |
 | Job 40: "Public key for openssl ... is not installed" | RHEL 10.1 ISO lacks Red Hat release key 4 (ML-DSA-87+Ed448), which signs current updates (RHEL-144980) | Job 30 upgrades to `redhat-release-10.1-18` (old-key signed, carries key 4), falls back to `--nogpgcheck` for that package only, imports the key file |
 | Job 60: permission denied on `vault.crt` | `/opt/vault/tls` readable only by `vault` | That play uses `become` |
+| Job 11: Windows VM stuck on a black screen with a cursor | BIOS tried to boot the non-bootable answer-file floppy | `boot_order = "disk,cdrom"` |
 | Job 21: `Win2022-VM01.vmdk was not found` | `Win2022-VM-Template` points at a deleted disk | New template `tmpl-win2022` built by job 11 |
 
 ## 14. Open items

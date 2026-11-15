@@ -72,6 +72,12 @@ source "vsphere-iso" "win2022" {
   iso_paths    = [var.os_iso_path, var.tools_iso_path]
   remove_cdrom = true
 
+  # Never boot from the answer-file floppy (not bootable: BIOS hangs on a black
+  # screen). Blank disk falls through to the Windows ISO; after setup the disk
+  # boots first, so the "press any key to boot from CD" prompt never restarts setup.
+  boot_order = "disk,cdrom"
+  boot_wait  = "5s"
+
   floppy_files = [
     "${path.root}/scripts/disable-network-discovery.cmd",
     "${path.root}/scripts/disable-server-manager.ps1",
