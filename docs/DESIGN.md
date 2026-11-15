@@ -12,7 +12,7 @@
 Red Hat Ansible Automation Platform (AAP) connects to RHEL hosts with short-lived
 SSH certificates signed by a HashiCorp Vault SSH certificate authority, instead
 of a long-lived key in `authorized_keys`. AAP fetches a fresh certificate (valid
-1 hour) from Vault every time a job starts; each host trusts the Vault CA's
+2 hours) from Vault every time a job starts; each host trusts the Vault CA's
 public key and nothing else changes on it.
 
 The whole lab, from the RHEL template to the final login test, is built by one
@@ -78,7 +78,7 @@ sequenceDiagram
   J->>V: AppRole login (role_id + secret_id)
   V-->>J: Vault token (10 min, policy aap-ssh-sign)
   J->>V: POST ssh-client-signer/sign/aap-linux<br/>public key, principal svc_aap
-  V-->>J: Signed certificate (1 h)
+  V-->>J: Signed certificate (2 h)
   J->>H: SSH as svc_aap with private key + certificate
   H->>H: Check signature against CA key,<br/>principal = svc_aap, not expired
   H-->>J: Login accepted
@@ -219,7 +219,7 @@ settings, so job 30 sets hostnames instead.
 | Boot | `vault-lab-unseal.service` unseals from that file after a reboot (lab only) |
 | Audit | File device, `/var/log/vault/audit.log` |
 | SSH mount | `ssh-client-signer`, CA key generated inside Vault |
-| Signing role | `aap-linux`: user certs only, principal `svc_aap`, `permit-pty`, `rsa-sha2-256`, TTL and max TTL 1 h (`ssh_cert_ttl` in `vars/lab.yml`), key ID `aap-<token>-<keyhash>` |
+| Signing role | `aap-linux`: user certs only, principal `svc_aap`, `permit-pty`, `rsa-sha2-256`, TTL and max TTL 2 h (`ssh_cert_ttl` in `vars/lab.yml`), key ID `aap-<token>-<keyhash>` |
 | Policy | `aap-ssh-sign`: `create`, `update` on `ssh-client-signer/sign/aap-linux` only |
 | AAP auth | AppRole `aap-controller`: token 10 min (max 20), secret_id 90 days, both bound to `192.168.1.0/24` |
 
@@ -231,7 +231,7 @@ settings, so job 30 sets hostnames instead.
   `.gitignore` excludes state, keys, `.env` and plans.
 - **Least privilege:** AAP's Vault token can sign for one role and one principal; a
   leaked AppRole secret_id is useless outside the bound subnet.
-- **Short-lived access:** certificates expire after 1 hour; removing the AppRole or
+- **Short-lived access:** certificates expire after 2 hours; removing the AppRole or
   the role stops all new AAP access immediately.
 - **Traceability:** every signing is in the Vault audit log; the key ID appears in
   each host's sshd log.
@@ -244,7 +244,7 @@ settings, so job 30 sets hostnames instead.
 | Property | How it is achieved |
 | --- | --- |
 | Issued per job | The Machine credential's certificate field is a Vault lookup, run by AAP at every job launch |
-| Short-lived | Signing role TTL = max TTL = `ssh_cert_ttl` (3600 s); Vault refuses anything longer |
+| Short-lived | Signing role TTL = max TTL = `ssh_cert_ttl` (7200 s); Vault refuses anything longer |
 | Not kept after the job | AAP writes the key and certificate only into the job's temporary private data directory and ssh-agent, which are destroyed when the job ends |
 | One principal | The certificate is valid only for `svc_aap` |
 | Traceable | Vault audit log records each signing; each host's sshd log records the certificate's key ID and serial |

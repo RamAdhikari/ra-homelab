@@ -22,5 +22,5 @@ vault_ssh_mount: ssh-client-signer
 vault_ssh_role: aap-linux
 aap_ssh_user: svc_aap
 aap_controller_cidrs: ["192.168.1.0/24"]
-ssh_cert_ttl: 3600   # seconds; each AAP job gets a fresh certificate valid this long
+ssh_cert_ttl: 7200   # seconds; each AAP job gets a fresh certificate valid this long
 vault_init_file: /root/vault-init.json

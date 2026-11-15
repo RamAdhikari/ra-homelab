@@ -24,7 +24,7 @@ variable "aap_controller_cidrs" {
 variable "ssh_cert_ttl" {
   description = "Lifetime of each signed SSH certificate, in seconds. AAP gets a new one per job."
   type        = number
-  default     = 3600
+  default     = 7200
 }
 
 resource "vault_mount" "ssh" {
