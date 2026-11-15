@@ -4,3 +4,10 @@ hc_tools_dir: /tmp/hc-tools
 hc_tools:
   - { name: packer, version: "1.11.2" }
   - { name: terraform, version: "1.9.8" }
+
+# Terraform providers, fetched from releases.hashicorp.com into a local
+# filesystem mirror. The job container cannot reach registry.terraform.io
+# reliably, so Terraform is configured to use only this mirror.
+hc_tf_providers:
+  - { name: vsphere, version: "2.12.0" }
+  - { name: vault, version: "4.4.0" }

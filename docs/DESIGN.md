@@ -158,8 +158,13 @@ Each node runs only if the previous one succeeded. Every job is idempotent.
 AAP runs jobs in its default execution environment. Rather than building a
 custom image, `roles/hashicorp_tools` downloads pinned releases (Packer 1.11.2,
 Terraform 1.9.8) from `releases.hashicorp.com`, verifies them against the
-published SHA256SUMS, and extracts them under `/tmp/hc-tools`. Packer and
-Terraform plugins download at run time too.
+published SHA256SUMS, and extracts them under `/tmp/hc-tools`. Packer plugins
+download from GitHub at run time.
+
+Terraform providers (vsphere 2.12.0, vault 4.4.0) are fetched the same way from
+`releases.hashicorp.com` into a local filesystem mirror, and a CLI config file
+(`TF_CLI_CONFIG_FILE`) tells Terraform to install only from that mirror. The
+job container could not reach `registry.terraform.io` reliably.
 
 Packer builds the kickstart CD with `xorriso` or `mkisofs`, and the default
 execution environment has neither. For a build, job 10 installs `pycdlib` with
@@ -286,6 +291,7 @@ settings, so job 30 sets hostnames instead.
 | AAP rejected `:Z` mount option | Only `z`, `O`, `ro`, `rw` allowed | Changed, then removed (below) |
 | Every AAP job failed: `lsetxattr ... operation not permitted` | Relabel of a root-owned folder on each job | Plain mount; folder owned by `aap` and labelled `container_file_t` |
 | Seed: "Playbook not found for project" | Project never synced successfully; seed did not resync | Seed now always syncs the project first |
+| Job 20: `terraform init` timed out on registry.terraform.io | Registry unreachable from the job container | Providers fetched from releases.hashicorp.com into a filesystem mirror |
 | Job 10: "could not find a supported CD ISO creation command" | No xorriso/mkisofs in the AAP execution environment | Template existence checked first via the vCenter API; pycdlib-based `mkisofs` stand-in for rebuilds |
 
 ## 12. Open items

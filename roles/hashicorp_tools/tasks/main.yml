@@ -31,6 +31,33 @@
     mode: "0755"
   loop: "{{ hc_tools }}"
 
+- name: Provider mirror directories
+  ansible.builtin.file:
+    path: "{{ hc_tools_dir }}/tf-mirror/registry.terraform.io/hashicorp/{{ item.name }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ hc_tf_providers }}"
+
+- name: Terraform providers into the local mirror (SHA256 verified)
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/terraform-provider-{{ item.name }}/{{ item.version }}/terraform-provider-{{ item.name }}_{{ item.version }}_linux_amd64.zip"
+    dest: "{{ hc_tools_dir }}/tf-mirror/registry.terraform.io/hashicorp/{{ item.name }}/terraform-provider-{{ item.name }}_{{ item.version }}_linux_amd64.zip"
+    checksum: "sha256:https://releases.hashicorp.com/terraform-provider-{{ item.name }}/{{ item.version }}/terraform-provider-{{ item.name }}_{{ item.version }}_SHA256SUMS"
+    mode: "0644"
+  loop: "{{ hc_tf_providers }}"
+
+- name: Terraform CLI config that installs providers only from the mirror
+  ansible.builtin.copy:
+    dest: "{{ hc_tools_dir }}/terraformrc"
+    mode: "0644"
+    content: |
+      provider_installation {
+        filesystem_mirror {
+          path    = "{{ hc_tools_dir }}/tf-mirror"
+          include = ["registry.terraform.io/hashicorp/*"]
+        }
+      }
+
 - name: Tool paths
   ansible.builtin.set_fact:
     packer_bin: "{{ hc_tools_dir }}/packer-{{ (hc_tools | selectattr('name', 'equalto', 'packer') | first).version }}/packer"
@@ -39,4 +66,5 @@
       CHECKPOINT_DISABLE: "1"
       TF_IN_AUTOMATION: "1"
       TF_PLUGIN_CACHE_DIR: "{{ hc_tools_dir }}/tf-plugins"
+      TF_CLI_CONFIG_FILE: "{{ hc_tools_dir }}/terraformrc"
       PACKER_PLUGIN_PATH: "{{ hc_tools_dir }}/packer-plugins"

@@ -6,7 +6,7 @@ terraform {
   required_providers {
     vsphere = {
       source  = "hashicorp/vsphere"
-      version = "~> 2.6"
+      version = "~> 2.6" # 2.12.0 pinned by the lock file and the mirror
     }
   }
 }

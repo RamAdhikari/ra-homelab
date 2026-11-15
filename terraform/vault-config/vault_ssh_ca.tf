@@ -8,7 +8,7 @@ terraform {
   required_providers {
     vault = {
       source  = "hashicorp/vault"
-      version = ">= 4.0"
+      version = "~> 4.4" # matches the mirror in roles/hashicorp_tools
     }
   }
 }
