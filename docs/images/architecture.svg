@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 520" width="1000" height="520" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#57606a"/></marker>
+  </defs>
+  <rect width="1000" height="520" fill="#ffffff"/>
+  <text x="30" y="34" font-size="20" font-weight="600" fill="#1f2328">What is in the lab</text>
+  <text x="30" y="56" font-size="13" fill="#57606a">Everything runs as VMs in VMware Fusion on the iMac (nested ESXi). AAP drives every step from code in GitHub.</text>
+
+  <!-- GitHub -->
+  <rect x="30" y="200" width="190" height="80" rx="10" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="125" y="232" font-size="16" font-weight="600" text-anchor="middle" fill="#1f2328">GitHub</text>
+  <text x="125" y="254" font-size="13" text-anchor="middle" fill="#57606a">ra-homelab repo</text>
+
+  <!-- AAP -->
+  <rect x="300" y="170" width="220" height="140" rx="10" fill="#efe9ff" stroke="#8250df" stroke-width="1.5"/>
+  <text x="410" y="210" font-size="18" font-weight="600" text-anchor="middle" fill="#1f2328">AAP</text>
+  <text x="410" y="234" font-size="13" text-anchor="middle" fill="#57606a">aap.lab.local</text>
+  <text x="410" y="256" font-size="13" text-anchor="middle" fill="#57606a">runs every job and holds</text>
+  <text x="410" y="274" font-size="13" text-anchor="middle" fill="#57606a">the credentials</text>
+
+  <!-- AD -->
+  <rect x="300" y="400" width="220" height="80" rx="10" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="410" y="432" font-size="16" font-weight="600" text-anchor="middle" fill="#1f2328">AD DNS / DC</text>
+  <text x="410" y="454" font-size="13" text-anchor="middle" fill="#57606a">192.168.1.200 · homelab.local</text>
+
+  <!-- vCenter -->
+  <rect x="660" y="80" width="310" height="80" rx="10" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="815" y="112" font-size="16" font-weight="600" text-anchor="middle" fill="#1f2328">vCenter + ESXi</text>
+  <text x="815" y="134" font-size="13" text-anchor="middle" fill="#57606a">builds templates, clones VMs</text>
+
+  <!-- Vault -->
+  <rect x="660" y="180" width="310" height="80" rx="10" fill="#fff1e5" stroke="#bc4c00" stroke-width="1.5"/>
+  <text x="815" y="212" font-size="16" font-weight="600" text-anchor="middle" fill="#1f2328">Vault · lab-vault01</text>
+  <text x="815" y="234" font-size="13" text-anchor="middle" fill="#57606a">SSH CA: signs 2-hour certificates</text>
+
+  <!-- Targets -->
+  <rect x="660" y="290" width="310" height="200" rx="10" fill="#f6f8fa" stroke="#8c959f" stroke-dasharray="5 4"/>
+  <text x="815" y="314" font-size="13" text-anchor="middle" fill="#57606a">Targets · local user svc_aap · trust the Vault CA</text>
+  <rect x="680" y="330" width="135" height="140" rx="8" fill="#ffebe9" stroke="#cf222e"/>
+  <text x="747" y="362" font-size="15" font-weight="600" text-anchor="middle" fill="#1f2328">RHEL 10</text>
+  <text x="747" y="392" font-size="13" text-anchor="middle" fill="#57606a">lab-rhel01</text>
+  <text x="747" y="414" font-size="13" text-anchor="middle" fill="#57606a">lab-rhel02</text>
+  <rect x="835" y="330" width="120" height="140" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="895" y="362" font-size="15" font-weight="600" text-anchor="middle" fill="#1f2328">Windows</text>
+  <text x="895" y="380" font-size="13" text-anchor="middle" fill="#1f2328">Server 2022</text>
+  <text x="895" y="410" font-size="13" text-anchor="middle" fill="#57606a">lab-win01</text>
+  <text x="895" y="432" font-size="13" text-anchor="middle" fill="#57606a">lab-win02</text>
+
+  <!-- arrows -->
+  <g stroke="#57606a" stroke-width="1.6" fill="none">
+    <path d="M220 240 H298" marker-end="url(#a)"/>
+    <path d="M410 170 V120 H658" marker-end="url(#a)"/>
+    <path d="M520 220 H658" marker-end="url(#a)"/>
+    <path d="M520 280 H600 V380 H658" marker-end="url(#a)"/>
+    <path d="M520 440 H640" stroke-dasharray="5 4" marker-end="url(#a)"/>
+  </g>
+  <g font-size="12" fill="#1f2328">
+    <text x="259" y="230" text-anchor="middle">code</text>
+    <text x="534" y="112">1 build + clone VMs</text>
+    <text x="534" y="212">2 sign certificate</text>
+    <text x="610" y="330" text-anchor="start">3 SSH as</text>
+    <text x="610" y="346" text-anchor="start">svc_aap</text>
+    <text x="534" y="432">domain join</text>
+  </g>
+</svg>

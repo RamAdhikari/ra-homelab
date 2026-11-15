@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 380" width="1100" height="380" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#57606a"/></marker>
+  </defs>
+  <rect width="1100" height="380" fill="#ffffff"/>
+  <text x="20" y="32" font-size="20" font-weight="600" fill="#1f2328">One AAP workflow builds and proves everything</text>
+  <text x="20" y="54" font-size="13" fill="#57606a">"homelab - Vault SSH lab (end to end)". Runs top to bottom, left to right; each job starts only if the one before succeeded. All jobs are safe to rerun.</text>
+
+  <!-- phase headers -->
+  <g font-size="13" font-weight="600" fill="#57606a" text-anchor="middle">
+    <text x="100" y="88">BUILD TEMPLATES</text>
+    <text x="280" y="88">CREATE VMs</text>
+    <text x="460" y="88">PREPARE RHEL</text>
+    <text x="640" y="88">VAULT</text>
+    <text x="820" y="88">TRUST THE CA</text>
+    <text x="1000" y="88">VERIFY</text>
+  </g>
+
+  <!-- boxes: x, y, colour -->
+  <g font-size="13" text-anchor="middle" fill="#1f2328">
+    <rect x="25" y="100" width="150" height="80" rx="8" fill="#ffebe9" stroke="#cf222e"/>
+    <text x="100" y="128" font-weight="600">10 RHEL template</text><text x="100" y="148">Packer</text><text x="100" y="166" fill="#57606a">tmpl-rhel10</text>
+    <rect x="25" y="220" width="150" height="80" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+    <text x="100" y="248" font-weight="600">11 Windows template</text><text x="100" y="268">Packer</text><text x="100" y="286" fill="#57606a">tmpl-win2022</text>
+
+    <rect x="205" y="100" width="150" height="80" rx="8" fill="#ffebe9" stroke="#cf222e"/>
+    <text x="280" y="128" font-weight="600">20 RHEL + Vault VMs</text><text x="280" y="148">Terraform</text><text x="280" y="166" fill="#57606a">3 VMs → inventory</text>
+    <rect x="205" y="220" width="150" height="80" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+    <text x="280" y="248" font-weight="600">21 Windows VMs</text><text x="280" y="268">Terraform</text><text x="280" y="286" fill="#57606a">+ domain join</text>
+
+    <rect x="385" y="100" width="150" height="80" rx="8" fill="#ffebe9" stroke="#cf222e"/>
+    <text x="460" y="128" font-weight="600">30 RHEL bootstrap</text><text x="460" y="148">hostnames,</text><text x="460" y="166">Red Hat registration</text>
+
+    <rect x="565" y="100" width="150" height="80" rx="8" fill="#fff1e5" stroke="#bc4c00"/>
+    <text x="640" y="128" font-weight="600">40 Install Vault</text><text x="640" y="148">TLS, init,</text><text x="640" y="166">unseal, audit</text>
+    <rect x="565" y="220" width="150" height="80" rx="8" fill="#fff1e5" stroke="#bc4c00"/>
+    <text x="640" y="248" font-weight="600">50 Vault SSH CA</text><text x="640" y="268">CA + AppRole,</text><text x="640" y="286">AAP signed creds</text>
+
+    <rect x="745" y="100" width="150" height="80" rx="8" fill="#ffebe9" stroke="#cf222e"/>
+    <text x="820" y="128" font-weight="600">60 RHEL</text><text x="820" y="148">svc_aap +</text><text x="820" y="166">trust the CA</text>
+    <rect x="745" y="220" width="150" height="80" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+    <text x="820" y="248" font-weight="600">61 Windows</text><text x="820" y="268">OpenSSH, svc_aap,</text><text x="820" y="286">trust the CA</text>
+
+    <rect x="925" y="100" width="150" height="80" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+    <text x="1000" y="128" font-weight="600">70 Verify</text><text x="1000" y="148">RHEL + Windows</text><text x="1000" y="166">signed cert only</text>
+  </g>
+
+  <!-- arrows: down within a phase, then on to the next phase -->
+  <g stroke="#57606a" stroke-width="1.6" fill="none">
+    <path d="M100 180 V218" marker-end="url(#a)"/>
+    <path d="M175 260 H190 V140 H203" marker-end="url(#a)"/>
+    <path d="M280 180 V218" marker-end="url(#a)"/>
+    <path d="M355 260 H370 V140 H383" marker-end="url(#a)"/>
+    <path d="M535 140 H563" marker-end="url(#a)"/>
+    <path d="M640 180 V218" marker-end="url(#a)"/>
+    <path d="M715 260 H730 V140 H743" marker-end="url(#a)"/>
+    <path d="M820 180 V218" marker-end="url(#a)"/>
+    <path d="M895 260 H910 V140 H923" marker-end="url(#a)"/>
+  </g>
+
+  <!-- legend -->
+  <g font-size="12" fill="#1f2328">
+    <rect x="25" y="330" width="14" height="14" rx="3" fill="#ffebe9" stroke="#cf222e"/><text x="45" y="342">RHEL</text>
+    <rect x="95" y="330" width="14" height="14" rx="3" fill="#ddf4ff" stroke="#0969da"/><text x="115" y="342">Windows</text>
+    <rect x="185" y="330" width="14" height="14" rx="3" fill="#fff1e5" stroke="#bc4c00"/><text x="205" y="342">Vault</text>
+    <rect x="255" y="330" width="14" height="14" rx="3" fill="#dafbe1" stroke="#1a7f37"/><text x="275" y="342">Verification</text>
+    <text x="400" y="342" fill="#57606a">Quick tests after setup: homelab 90 (RHEL) and 91 (Windows) show host, user and certificate serial.</text>
+  </g>
+</svg>

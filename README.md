@@ -7,25 +7,32 @@ service account `svc_aap`. No stored passwords or static keys.
 Everything, from VM templates to the final login test, is code in this repo and
 runs from one AAP workflow.
 
-**Setting it up from scratch, including every credential: [docs/SETUP.md](docs/SETUP.md).**
-**Full design, flows and troubleshooting history: [docs/DESIGN.md](docs/DESIGN.md).**
+![How AAP logs in with a just-in-time certificate](docs/images/jit-login.svg)
+
+| Read | For |
+| --- | --- |
+| [docs/OVERVIEW.md](docs/OVERVIEW.md) | The idea in plain words, with pictures. **Start here.** |
+| [docs/SETUP.md](docs/SETUP.md) | Setting it up from scratch, including every credential |
+| [docs/DESIGN.md](docs/DESIGN.md) | Full design, decisions and troubleshooting history |
 
 ## Run it
 
 AAP › Templates › **homelab - Vault SSH lab (end to end)** › Launch.
 
+![The end-to-end workflow](docs/images/workflow.svg)
+
 | # | Job template | What it does |
 | --- | --- | --- |
 | 10 | build RHEL 10 template | Packer builds `tmpl-rhel10` (skips if it exists) |
 | 11 | build Windows 2022 template | Packer builds `tmpl-win2022` (skips if it exists) |
-| 20 | provision VMs | Terraform clones `lab-vault01`, `lab-rhel01`, `lab-rhel02` |
+| 20 | provision RHEL and Vault VMs | Terraform clones `lab-vault01`, `lab-rhel01`, `lab-rhel02` |
 | 21 | provision Windows VMs | Terraform clones `lab-win01`, `lab-win02` from `tmpl-win2022`, joins `homelab.local` |
-| 30 | bootstrap hosts | RHEL hostnames, Red Hat registration and signing key |
+| 30 | bootstrap RHEL hosts | RHEL hostnames, Red Hat registration and signing key |
 | 40 | install Vault | Vault on `lab-vault01`: TLS, init, unseal, audit |
 | 50 | configure Vault SSH CA | SSH CA + AppRole; creates AAP credentials `rhel-svc-aap-signed`, `win-svc-aap-signed` |
-| 60 | trust SSH CA on targets | RHEL: `svc_aap` + trust the Vault CA |
-| 61 | Windows OpenSSH + trust SSH CA | Windows: OpenSSH Server, `svc_aap`, trust the Vault CA |
-| 70 | verify signed SSH | Logs in to RHEL and Windows with certificates only |
+| 60 | RHEL trust SSH CA | RHEL: `svc_aap` + trust the Vault CA |
+| 61 | Windows OpenSSH and trust SSH CA | Windows: OpenSSH Server, `svc_aap`, trust the Vault CA |
+| 70 | verify signed SSH (RHEL and Windows) | Logs in to RHEL and Windows with certificates only |
 
 Quick tests: **homelab 90** (RHEL) and **homelab 91** (Windows) show hostname, user,
 uptime and the certificate serial for each server. **homelab 80** shows the full
@@ -70,7 +77,7 @@ certificate issued for a run.
 ## Layout
 
 ```
-aap/seed.yml                   AAP config as code
+aap/seed.yml                   AAP config as code (safe to rerun; renames old objects)
 playbooks/                     one playbook per job template
 roles/hashicorp_tools/         Packer, Terraform and providers for the job container
 packer/rhel10/                 RHEL 10 template
@@ -79,7 +86,8 @@ terraform/rhel-vms/            Vault + RHEL VMs
 terraform/win-vms/             Windows VMs (domain-joined)
 terraform/vault-config/        Vault SSH CA, role, policy, AppRole
 vars/lab.yml                   shared non-secret settings
-docs/DESIGN.md                 design document
+docs/OVERVIEW.md, SETUP.md, DESIGN.md  plain-words overview, setup guide, design
+docs/images/                   diagrams used by the docs
 ```
 
 ## Lab-only shortcuts

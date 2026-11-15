@@ -1,8 +1,10 @@
 # ra-homelab design: just-in-time SSH certificates for AAP
 
+> New here? Read [OVERVIEW.md](OVERVIEW.md) first (plain words, three pictures), then [SETUP.md](SETUP.md).
+
 | | |
 | --- | --- |
-| Status | RHEL: built and verified end to end. Windows: code complete, first run pending |
+| Status | RHEL and Windows: built and verified end to end |
 | Owner | Ram Adhikari |
 | Last updated | 2026-11-15 |
 | Repo | `github.com/RamAdhikari/ra-homelab` |
@@ -43,28 +45,7 @@ login works, is code in this repo, run by one AAP workflow.
 
 ## 2. The lab
 
-```mermaid
-flowchart LR
-  subgraph Mac["iMac · VMware Fusion"]
-    subgraph E156["ESXi 192.168.1.156"]
-      VC["vCenter<br/>vcsa.homelab.local"]
-    end
-    subgraph E155["ESXi 192.168.1.155 · datastore LocalDS"]
-      V["lab-vault01 .29<br/>Vault"]
-      R["lab-rhel01 .27<br/>lab-rhel02 .28"]
-      W["lab-win01<br/>lab-win02"]
-      T["Templates<br/>tmpl-rhel10<br/>tmpl-win2022"]
-    end
-  end
-  AAP["AAP<br/>aap.lab.local (.58)"]
-  DNS["AD DNS / DC<br/>192.168.1.200<br/>homelab.local"]
-  GH["GitHub<br/>ra-homelab"]
-  GH -->|project sync| AAP
-  AAP -->|Packer, Terraform| VC
-  AAP -->|SSH + certificate| R & W
-  AAP -->|AppRole, sign| V
-  W -->|domain member| DNS
-```
+![Lab layout](images/architecture.svg)
 
 | Component | Address | Notes |
 | --- | --- | --- |
@@ -83,22 +64,7 @@ All VMs use DHCP. Jobs 20 and 21 write the current addresses into the AAP invent
 The flow is identical for RHEL and Windows; only the server side differs (OpenSSH
 on Linux, OpenSSH Server for Windows).
 
-```mermaid
-sequenceDiagram
-  autonumber
-  participant J as AAP job
-  participant V as Vault
-  participant H as Server (RHEL or Windows)
-  Note over H: Set up once (jobs 60 / 61):<br/>sshd trusts the Vault CA public key,<br/>local user svc_aap exists
-  J->>V: AppRole login (role ID + secret ID)
-  V-->>J: Vault token, 10 min, may only sign
-  J->>V: Sign this public key for principal svc_aap
-  V-->>J: Certificate, valid 2 hours
-  J->>H: SSH as svc_aap with private key + certificate
-  H->>H: Signed by trusted CA? principal svc_aap? not expired?
-  H-->>J: Login accepted, job runs
-  Note over J: Job ends: container and certificate are destroyed
-```
+![How a just-in-time login works](images/jit-login.svg)
 
 Steps 1 to 4 are done by AAP's built-in **HashiCorp Vault Signed SSH** credential
 type. The Machine credential's "Signed SSH Certificate" field is linked to it, so
@@ -140,7 +106,7 @@ certificate whose principal is `svc_aap`.
 flowchart LR
   subgraph Vault["Vault (lab-vault01)"]
     CA["SSH CA private key<br/>mount ssh-client-signer"]
-    Role["Role aap-linux<br/>principal svc_aap only, 2 h"]
+    Role["Role aap-ssh<br/>principal svc_aap only, 2 h"]
   end
   subgraph AAP["AAP credentials"]
     Signer["vault-ssh-signer<br/>AppRole login"]
@@ -183,11 +149,7 @@ has it in `authorized_keys`.
 
 ### 5.1 One workflow
 
-```mermaid
-flowchart LR
-  T10["10 RHEL template<br/>Packer"] --> T11["11 Windows template<br/>Packer"] --> T20["20 RHEL VMs<br/>Terraform"] --> T21["21 Windows VMs<br/>Terraform + domain join"] --> T30["30 RHEL bootstrap<br/>hostname, Red Hat"]
-  T30 --> T40["40 Vault<br/>install, init"] --> T50["50 Vault SSH CA<br/>+ AAP credentials"] --> T60["60 RHEL trust CA"] --> T61["61 Windows OpenSSH<br/>+ trust CA"] --> T70["70 Verify<br/>RHEL + Windows"]
-```
+![The end-to-end workflow](images/workflow.svg)
 
 AAP › Templates › **homelab - Vault SSH lab (end to end)** › Launch. Each step runs
 only if the previous one succeeded, and every step is safe to rerun.
@@ -196,22 +158,22 @@ only if the previous one succeeded, and every step is safe to rerun.
 | --- | --- | --- | --- | --- |
 | 10 | build RHEL 10 template | job container | Packer builds `tmpl-rhel10` | Skips if it exists; `rebuild_template=true` replaces it |
 | 11 | build Windows 2022 template | job container | Packer builds `tmpl-win2022` from the Server 2022 ISO on LocalDS (answer file on a floppy) | Skips if it exists; `rebuild_template=true` replaces it |
-| 20 | provision VMs | job container | Terraform clones Vault + 2 RHEL VMs; writes IPs to the inventory | Plans first, applies only changes |
+| 20 | provision RHEL and Vault VMs | job container | Terraform clones Vault + 2 RHEL VMs; writes IPs to the inventory | Plans first, applies only changes |
 | 21 | provision Windows VMs | job container | Terraform clones 2 Windows VMs from `tmpl-win2022`, sets the local Administrator password, joins `homelab.local`; writes IPs to the inventory; group `win_targets` connects over OpenSSH + PowerShell | Plans first, applies only changes |
-| 30 | bootstrap hosts | Vault + RHEL VMs | Hostname, `/etc/hosts`, Red Hat registration, Red Hat release key 4 | Registers only if not registered |
+| 30 | bootstrap RHEL hosts | Vault + RHEL VMs | Hostname, `/etc/hosts`, Red Hat registration, Red Hat release key 4 | Registers only if not registered |
 | 40 | install Vault | lab-vault01 | Signing keys, Vault, TLS, config, firewall, init, unseal, boot-time unseal, audit log | Init only once; unseal only if sealed |
 | 50 | configure Vault SSH CA | Vault + job container | Terraform: CA, role, policy, AppRole. New secret ID and key; creates/updates both Machine credentials; publishes the CA public key as an inventory variable | Rotates the secret ID and key each run |
-| 60 | trust SSH CA on targets | RHEL VMs | `svc_aap` + sudo, CA key file, `TrustedUserCAKeys` | Idempotent |
-| 61 | Windows OpenSSH + trust SSH CA | Windows VMs (WinRM, once) | OpenSSH Server (Windows feature, or Microsoft's Win32-OpenSSH 9.8.3 MSI when Windows Update is unreachable), firewall, PowerShell default shell, `svc_aap` in Administrators, CA key file, `TrustedUserCAKeys` | Idempotent |
-| 70 | verify signed SSH | job container | Ad hoc `id -un` on RHEL and `win_ping` on Windows, both with signed credentials only | Read-only |
+| 60 | RHEL trust SSH CA | RHEL VMs | `svc_aap` + sudo, CA key file, `TrustedUserCAKeys` | Idempotent |
+| 61 | Windows OpenSSH and trust SSH CA | Windows VMs (WinRM, once) | OpenSSH Server (Windows feature, or Microsoft's Win32-OpenSSH 9.8.3 MSI when Windows Update is unreachable), firewall, PowerShell default shell, `svc_aap` in Administrators, CA key file, `TrustedUserCAKeys` | Idempotent |
+| 70 | verify signed SSH (RHEL and Windows) | job container | Ad hoc `id -un` on RHEL and `win_ping` on Windows, both with signed credentials only | Read-only |
 
 ### 5.2 Test job templates
 
 | Job template | Credential | Shows |
 | --- | --- | --- |
-| homelab 90 - connectivity check (signed cert) | `rhel-svc-aap-signed` | Per RHEL host: ping, hostname, user, OS, uptime, accepted certificate ID and serial |
+| homelab 90 - RHEL connectivity check (signed cert) | `rhel-svc-aap-signed` | Per RHEL host: ping, hostname, user, OS, uptime, accepted certificate ID and serial |
 | homelab 91 - Windows connectivity check (signed cert) | `win-svc-aap-signed` | Per Windows host: ping, hostname, domain, user, OS, uptime, accepted certificate ID and serial |
-| homelab 80 - run job with JIT certificate | `rhel-svc-aap-signed` | The certificate issued for the run (key ID, serial, principal, validity) and sudo working |
+| homelab 80 - RHEL JIT certificate demo | `rhel-svc-aap-signed` | The certificate issued for the run (key ID, serial, principal, validity) and sudo working |
 
 Run any of them twice: the serial changes, because each run gets a new certificate.
 
@@ -220,7 +182,7 @@ Run any of them twice: the serial changes, because each run gets a new certifica
 | Object | Name | Created by |
 | --- | --- | --- |
 | Project | `ra-homelab` (git `main`, update on launch) | `aap/seed.yml` |
-| Inventory | `homelab-rhel-lab`: groups `vault`, `rhel_targets`, `win_targets` | Seed; hosts by jobs 20/21; variables by job 50 |
+| Inventory | `homelab-lab`: groups `vault`, `rhel_targets` (RHEL), `win_targets` (Windows) | Seed; hosts by jobs 20/21; variables by job 50 |
 | Credential types | `Homelab lab secrets`, `Homelab domain join` | Seed |
 | Job templates and workflow | Section 5.1 and 5.2 | Seed (80/90/91 once their credentials exist) |
 | Setting | `AWX_ISOLATION_SHOW_PATHS` += `/var/lib/homelab-tfstate` | Seed |
@@ -325,8 +287,8 @@ networking), so job 30 sets hostnames.
 | After a reboot | `vault-lab-unseal.service` unseals from that file (lab only) |
 | Audit | `/var/log/vault/audit.log` |
 | SSH mount | `ssh-client-signer`; the CA private key never leaves Vault |
-| Signing role | `aap-linux` (used for RHEL and Windows): user certificates only, principal `svc_aap`, `permit-pty`, `rsa-sha2-256`, TTL = max TTL = 2 h, key ID `aap-<token>-<keyhash>` |
-| Policy | `aap-ssh-sign`: may only sign with role `aap-linux` |
+| Signing role | `aap-ssh` (one role for RHEL and Windows): user certificates only, principal `svc_aap`, `permit-pty`, `rsa-sha2-256`, TTL = max TTL = 2 h, key ID `aap-<token>-<keyhash>` |
+| Policy | `aap-ssh-sign`: may only sign with role `aap-ssh` |
 | AAP login | AppRole `aap-controller`: token 10 min (max 20), secret ID 90 days, both limited to `192.168.1.0/24` |
 
 `rsa-sha2-256` matters: RHEL 8 and later reject SHA-1 `ssh-rsa` certificate signatures.
@@ -392,6 +354,7 @@ The full step-by-step guide, with every credential field, is [SETUP.md](SETUP.md
 | Collection for AAP config | `awx.awx` with `/api/controller/` prefix | On Galaxy, no Automation Hub token; prefix needed behind the AAP 2.5+ gateway |
 | Tools in jobs | Download per job | No custom execution environment or registry needed for a lab |
 | RHEL naming | Ansible after clone | vCenter cannot customise RHEL 10 |
+| Object names | Say which OS a job or credential is for; shared objects (inventory `homelab-lab`, Vault role `aap-ssh`) are OS-neutral | The lab started RHEL-only; the seed renames older objects in place so job history is kept |
 
 ## 12. Lab vs production
 
@@ -434,10 +397,8 @@ The full step-by-step guide, with every credential field, is [SETUP.md](SETUP.md
 
 ## 14. Open items
 
-- [ ] First run of the Windows jobs (11, 21, 61, 70, 91).
 - [ ] Delete the broken `Win2022-VM-Template` in vCenter.
 - [ ] Rotate secrets that were shared in chat: vCenter admin password, AAP API token, the `claude` AAP user password.
 - [ ] DHCP reservations for the lab VMs.
 - [ ] Rebuild `tmpl-rhel10` so its `labadmin` password matches the reset one.
 - [ ] Clean up `/etc/hosts` on the AAP VM (`aap.lab.local` on 127.0.0.1 and a stale 192.168.1.33).
-- [ ] Optional: rename inventory `homelab-rhel-lab` to `homelab-lab` now that it holds Windows too.

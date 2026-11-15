@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1f2328"/></marker>
+  </defs>
+  <rect width="1000" height="560" fill="#ffffff"/>
+  <text x="30" y="34" font-size="20" font-weight="600" fill="#1f2328">How AAP logs in with a just-in-time certificate</text>
+  <text x="30" y="56" font-size="13" fill="#57606a">Same flow for RHEL and Windows. Steps 1-4 happen automatically every time a job starts.</text>
+
+  <!-- one-time setup band -->
+  <rect x="30" y="72" width="940" height="40" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="500" y="97" font-size="13" text-anchor="middle" fill="#1f2328">Set up once (jobs 60 and 61): each server gets the Vault CA public key and a local user svc_aap with no password or key</text>
+
+  <!-- lane headers -->
+  <rect x="80" y="130" width="180" height="56" rx="10" fill="#efe9ff" stroke="#8250df" stroke-width="1.5"/>
+  <text x="170" y="164" font-size="16" font-weight="600" text-anchor="middle" fill="#1f2328">AAP job</text>
+  <rect x="410" y="130" width="180" height="56" rx="10" fill="#fff1e5" stroke="#bc4c00" stroke-width="1.5"/>
+  <text x="500" y="164" font-size="16" font-weight="600" text-anchor="middle" fill="#1f2328">Vault</text>
+  <rect x="740" y="130" width="180" height="56" rx="10" fill="#f6f8fa" stroke="#57606a" stroke-width="1.5"/>
+  <text x="830" y="158" font-size="16" font-weight="600" text-anchor="middle" fill="#1f2328">Server</text>
+  <text x="830" y="176" font-size="12" text-anchor="middle" fill="#57606a">RHEL or Windows</text>
+
+  <!-- lifelines -->
+  <g stroke="#8c959f" stroke-dasharray="4 4"><line x1="170" y1="186" x2="170" y2="500"/><line x1="500" y1="186" x2="500" y2="500"/><line x1="830" y1="186" x2="830" y2="500"/></g>
+
+  <g stroke="#1f2328" stroke-width="1.6" fill="none">
+    <line x1="172" y1="225" x2="496" y2="225" marker-end="url(#a)"/>
+    <line x1="498" y1="268" x2="174" y2="268" marker-end="url(#a)"/>
+    <line x1="172" y1="311" x2="496" y2="311" marker-end="url(#a)"/>
+    <line x1="498" y1="354" x2="174" y2="354" marker-end="url(#a)"/>
+    <line x1="172" y1="397" x2="826" y2="397" marker-end="url(#a)"/>
+    <line x1="828" y1="480" x2="174" y2="480" marker-end="url(#a)"/>
+  </g>
+  <g font-size="13" fill="#1f2328" text-anchor="middle">
+    <text x="335" y="217">1  Log in with AppRole (role ID + secret ID)</text>
+    <text x="335" y="260">2  Token: 10 minutes, may only sign</text>
+    <text x="335" y="303">3  "Sign this public key for svc_aap"</text>
+    <text x="335" y="346" font-weight="600">4  Certificate, valid 2 hours</text>
+    <text x="500" y="389">5  SSH as svc_aap with private key + certificate</text>
+    <text x="500" y="472">7  Login accepted, the job runs</text>
+  </g>
+
+  <!-- server checks -->
+  <rect x="690" y="408" width="280" height="52" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="830" y="428" font-size="13" text-anchor="middle" fill="#1f2328">6  Signed by the trusted CA? For svc_aap?</text>
+  <text x="830" y="446" font-size="13" text-anchor="middle" fill="#1f2328">Not expired? Otherwise: rejected</text>
+
+  <!-- footer -->
+  <rect x="30" y="510" width="940" height="36" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="500" y="533" font-size="13" text-anchor="middle" fill="#1f2328">Job ends: the key and certificate are deleted with the job container. A copied certificate stops working within 2 hours.</text>
+</svg>

@@ -93,7 +93,7 @@
         inputs:
           username: "{{ aap_ssh_user }}"
           ssh_key_data: "{{ lookup('file', hc_tools_dir ~ '/aap_key') }}"
-      loop: ["{{ machine_credential }}", "{{ win_machine_credential }}"]
+      loop: ["{{ rhel_machine_credential }}", "{{ win_machine_credential }}"]
       no_log: true
 
     - name: Certificate field filled from Vault at launch
@@ -106,7 +106,7 @@
           secret_path: "{{ vault_ssh_mount }}"
           role: "{{ vault_ssh_role }}"
           valid_principals: "{{ aap_ssh_user }}"
-      loop: ["{{ machine_credential }}", "{{ win_machine_credential }}"]
+      loop: ["{{ rhel_machine_credential }}", "{{ win_machine_credential }}"]
 
     - name: Publish the CA public key and Vault address as inventory variables
       awx.awx.inventory:

@@ -38,9 +38,9 @@ resource "vault_ssh_secret_backend_ca" "ca" {
   generate_signing_key = true
 }
 
-resource "vault_ssh_secret_backend_role" "aap_linux" {
+resource "vault_ssh_secret_backend_role" "aap_ssh" {
   backend                 = vault_mount.ssh.path
-  name                    = "aap-linux"
+  name                    = "aap-ssh" # signs for RHEL and Windows targets
   key_type                = "ca"
   algorithm_signer        = "rsa-sha2-256"
   allow_user_certificates = true
@@ -57,7 +57,7 @@ resource "vault_ssh_secret_backend_role" "aap_linux" {
 resource "vault_policy" "aap_ssh_sign" {
   name   = "aap-ssh-sign"
   policy = <<-EOT
-    path "ssh-client-signer/sign/aap-linux" {
+    path "ssh-client-signer/sign/aap-ssh" {
       capabilities = ["create", "update"]
     }
   EOT

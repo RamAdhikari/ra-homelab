@@ -4,7 +4,7 @@ Step-by-step setup of the lab automation in AAP, from an empty AAP organisation 
 a green end-to-end run. Follow the steps in order. Every value you type is listed;
 secrets are entered only in the AAP UI or at a hidden prompt, never in files.
 
-For how it works, see [DESIGN.md](DESIGN.md).
+New to the idea? Read [OVERVIEW.md](OVERVIEW.md) first. For every detail, see [DESIGN.md](DESIGN.md).
 
 | Step | What | Where | Time |
 | --- | --- | --- | --- |
@@ -219,7 +219,10 @@ ansible-playbook aap/seed.yml
 
 Expected: no failed tasks. It syncs the project from GitHub, creates the job
 templates (10, 11, 20, 21, 30, 40, 50, 60, 61, 70) and the workflow
-**homelab - Vault SSH lab (end to end)**.
+**homelab - Vault SSH lab (end to end)**. If you set up an earlier version, it
+also renames the old inventory (`homelab-rhel-lab`) and job templates in place.
+
+![The end-to-end workflow](images/workflow.svg)
 
 If "Sync the project from GitHub" fails, read the sync log:
 
@@ -261,9 +264,9 @@ ansible-playbook aap/seed.yml
 
 | Job template | Shows |
 | --- | --- |
-| homelab 90 - connectivity check (signed cert) | RHEL: host, user `svc_aap`, OS, uptime, certificate ID + serial |
+| homelab 90 - RHEL connectivity check (signed cert) | RHEL: host, user `svc_aap`, OS, uptime, certificate ID + serial |
 | homelab 91 - Windows connectivity check (signed cert) | Windows: host, domain, user, OS, uptime, certificate ID + serial |
-| homelab 80 - run job with JIT certificate | The certificate issued for the run and its 2-hour validity |
+| homelab 80 - RHEL JIT certificate demo | The certificate issued for the run and its 2-hour validity |
 
 Launch one twice: the serial changes, because each run gets a fresh certificate.
 

@@ -1,15 +1,17 @@
-# One-time AAP configuration as code for the ra-homelab project.
-# Creates: the "Homelab lab secrets" credential type, the project, the
-# inventory, seven job templates and the end-to-end workflow, and exposes the
-# Terraform state directory to job containers.
+# AAP configuration as code for ra-homelab. Safe to rerun at any time.
 #
-# Run once from any machine with the awx.awx collection, or later as an AAP job:
+# Creates or updates: two custom credential types, the inventory, the
+# Terraform state-path setting, the project, the job templates, the end-to-end
+# workflow, and (once job 50 has created the signed credentials) the test
+# job templates. Renames objects from older versions of this repo in place.
+#
+# Run from the Mac (see docs/SETUP.md):
 #   export CONTROLLER_HOST=https://aap.lab.local CONTROLLER_VERIFY_SSL=false
-#   read -s "CONTROLLER_OAUTH_TOKEN?AAP token: "; export CONTROLLER_OAUTH_TOKEN; echo
+#   export CONTROLLER_OAUTH_TOKEN=$(security find-generic-password -s aap-lab-token -w)
 #   ansible-playbook aap/seed.yml
 #
-# Secret-bearing credentials are created by you in the UI (names below). The
-# play creates everything it can, then stops with a list if any are missing.
+# Credentials holding secrets are created by you in the UI. The play creates
+# everything it can, then stops with a list if any are missing.
 - name: Seed AAP for ra-homelab
   hosts: localhost
   connection: local
@@ -31,17 +33,36 @@
       - { name: homelab-labadmin, type: Machine (username labadmin + password) }
       - { name: homelab-aap-api, type: Red Hat Ansible Automation Platform (host https://host.containers.internal + token) }
       - { name: homelab-domain-join, type: Homelab domain join }
+    # The workflow runs these in this order.
     job_templates:
       - { id: build, name: "homelab 10 - build RHEL 10 template", playbook: playbooks/10_build_template.yml, creds: [homelab-vcenter, homelab-lab-secrets], ask_vars: true }
       - { id: build_win, name: "homelab 11 - build Windows 2022 template", playbook: playbooks/11_build_windows_template.yml, creds: [homelab-vcenter, homelab-lab-secrets], ask_vars: true }
-      - { id: provision, name: "homelab 20 - provision VMs", playbook: playbooks/20_provision_vms.yml, creds: [homelab-vcenter, homelab-aap-api] }
+      - { id: provision, name: "homelab 20 - provision RHEL and Vault VMs", playbook: playbooks/20_provision_vms.yml, creds: [homelab-vcenter, homelab-aap-api] }
       - { id: provision_win, name: "homelab 21 - provision Windows VMs", playbook: playbooks/21_provision_windows_vms.yml, creds: [homelab-vcenter, homelab-lab-secrets, homelab-domain-join, homelab-aap-api] }
-      - { id: bootstrap, name: "homelab 30 - bootstrap hosts", playbook: playbooks/30_bootstrap_hosts.yml, creds: [homelab-labadmin, homelab-lab-secrets] }
+      - { id: bootstrap, name: "homelab 30 - bootstrap RHEL hosts", playbook: playbooks/30_bootstrap_hosts.yml, creds: [homelab-labadmin, homelab-lab-secrets] }
       - { id: vault_install, name: "homelab 40 - install Vault", playbook: playbooks/40_vault_install.yml, creds: [homelab-labadmin] }
       - { id: vault_configure, name: "homelab 50 - configure Vault SSH CA", playbook: playbooks/50_vault_configure.yml, creds: [homelab-labadmin, homelab-aap-api] }
-      - { id: ca_trust, name: "homelab 60 - trust SSH CA on targets", playbook: playbooks/60_ssh_ca_trust.yml, creds: [homelab-labadmin] }
-      - { id: win_trust, name: "homelab 61 - Windows OpenSSH + trust SSH CA", playbook: playbooks/61_windows_ssh_ca_trust.yml, creds: [homelab-lab-secrets] }
-      - { id: verify, name: "homelab 70 - verify signed SSH", playbook: playbooks/70_verify.yml, creds: [homelab-aap-api] }
+      - { id: ca_trust, name: "homelab 60 - RHEL trust SSH CA", playbook: playbooks/60_ssh_ca_trust.yml, creds: [homelab-labadmin] }
+      - { id: win_trust, name: "homelab 61 - Windows OpenSSH and trust SSH CA", playbook: playbooks/61_windows_ssh_ca_trust.yml, creds: [homelab-lab-secrets] }
+      - { id: verify, name: "homelab 70 - verify signed SSH (RHEL and Windows)", playbook: playbooks/70_verify.yml, creds: [homelab-aap-api] }
+
+    # Test templates that use only a Vault-signed credential; created once job 50
+    # has made that credential.
+    test_templates:
+      - { name: "homelab 80 - RHEL JIT certificate demo", playbook: playbooks/80_jit_certificate_demo.yml, cred: rhel-svc-aap-signed, limit: rhel_targets }
+      - { name: "homelab 90 - RHEL connectivity check (signed cert)", playbook: playbooks/90_connectivity_check.yml, cred: rhel-svc-aap-signed, limit: rhel_targets }
+      - { name: "homelab 91 - Windows connectivity check (signed cert)", playbook: playbooks/91_windows_connectivity_check.yml, cred: win-svc-aap-signed, limit: win_targets }
+
+    # Objects renamed since earlier versions: renamed in place so job history stays.
+    renames:
+      - { kind: inventories, old: homelab-rhel-lab, new: homelab-lab }
+      - { kind: job_templates, old: "homelab 20 - provision VMs", new: "homelab 20 - provision RHEL and Vault VMs" }
+      - { kind: job_templates, old: "homelab 30 - bootstrap hosts", new: "homelab 30 - bootstrap RHEL hosts" }
+      - { kind: job_templates, old: "homelab 60 - trust SSH CA on targets", new: "homelab 60 - RHEL trust SSH CA" }
+      - { kind: job_templates, old: "homelab 61 - Windows OpenSSH + trust SSH CA", new: "homelab 61 - Windows OpenSSH and trust SSH CA" }
+      - { kind: job_templates, old: "homelab 70 - verify signed SSH", new: "homelab 70 - verify signed SSH (RHEL and Windows)" }
+      - { kind: job_templates, old: "homelab 80 - run job with JIT certificate", new: "homelab 80 - RHEL JIT certificate demo" }
+      - { kind: job_templates, old: "homelab 90 - connectivity check (signed cert)", new: "homelab 90 - RHEL connectivity check (signed cert)" }
   environment:
     CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX: /api/controller/
   tasks:
@@ -95,11 +116,35 @@
         name: AWX_ISOLATION_SHOW_PATHS
         value: "{{ (job_settings.json.AWX_ISOLATION_SHOW_PATHS | default([], true) | reject('match', '^' ~ tfstate_dir ~ '(:|$)') | list) + [tfstate_dir ~ ':' ~ tfstate_dir] }}"
 
+    - name: Look up objects with old names
+      ansible.builtin.uri:
+        url: "{{ controller_api }}/{{ item.kind }}/?name={{ item.old | urlencode }}"
+        headers: "{{ api_headers }}"
+        validate_certs: false
+      register: rename_lookup
+      loop: "{{ renames }}"
+      loop_control:
+        label: "{{ item.old }}"
+
+    - name: Rename them in place
+      ansible.builtin.uri:
+        url: "{{ controller_api }}/{{ item.item.kind }}/{{ item.json.results[0].id }}/"
+        method: PATCH
+        headers: "{{ api_headers }}"
+        body_format: json
+        body: { name: "{{ item.item.new }}" }
+        validate_certs: false
+      loop: "{{ rename_lookup.results }}"
+      loop_control:
+        label: "{{ item.item.old }} -> {{ item.item.new }}"
+      when: item.json.count | int > 0
+      changed_when: true
+
     - name: Inventory
       awx.awx.inventory:
         name: "{{ lab_inventory }}"
         organization: "{{ controller_org }}"
-        description: RHEL 10 lab VMs (hosts written by "homelab 20 - provision VMs")
+        description: "Lab targets: vault, rhel_targets (RHEL 10), win_targets (Windows 2022). Hosts written by jobs 20 and 21."
         state: present
 
     - name: Which secret-bearing credentials exist
@@ -155,63 +200,35 @@
       loop_control:
         label: "{{ item.name }}"
 
-    # Demo template that uses only the Vault-signed credential. That credential
-    # is created by job 50, so this is skipped until it exists.
-    - name: Does the Vault-signed machine credential exist yet
+    - name: Which Vault-signed credentials exist (created by job 50)
       ansible.builtin.uri:
-        url: "{{ controller_api }}/credentials/?name={{ machine_credential | urlencode }}"
+        url: "{{ controller_api }}/credentials/?name={{ item | urlencode }}"
         headers: "{{ api_headers }}"
         validate_certs: false
-      register: signed_cred
+      register: signed_creds
+      loop: "{{ test_templates | map(attribute='cred') | unique | list }}"
 
-    - name: Job template that runs on the targets with a just-in-time certificate
+    - name: Test job templates (only once their signed credential exists)
       awx.awx.job_template:
-        name: "homelab 80 - run job with JIT certificate"
+        name: "{{ item.name }}"
         organization: "{{ controller_org }}"
         project: "{{ project_name }}"
         inventory: "{{ lab_inventory }}"
-        playbook: playbooks/80_jit_certificate_demo.yml
-        credentials: ["{{ machine_credential }}"]
-        limit: rhel_targets
+        playbook: "{{ item.playbook }}"
+        credentials: ["{{ item.cred }}"]
+        limit: "{{ item.limit }}"
         state: present
-      when: signed_cred.json.count | int > 0
-
-    - name: Job template - basic connectivity check with the signed certificate
-      awx.awx.job_template:
-        name: "homelab 90 - connectivity check (signed cert)"
-        organization: "{{ controller_org }}"
-        project: "{{ project_name }}"
-        inventory: "{{ lab_inventory }}"
-        playbook: playbooks/90_connectivity_check.yml
-        credentials: ["{{ machine_credential }}"]
-        limit: rhel_targets
-        state: present
-      when: signed_cred.json.count | int > 0
-
-    - name: Does the Windows Vault-signed credential exist yet
-      ansible.builtin.uri:
-        url: "{{ controller_api }}/credentials/?name={{ win_machine_credential | urlencode }}"
-        headers: "{{ api_headers }}"
-        validate_certs: false
-      register: win_signed_cred
-
-    - name: Job template - Windows connectivity check with the signed certificate
-      awx.awx.job_template:
-        name: "homelab 91 - Windows connectivity check (signed cert)"
-        organization: "{{ controller_org }}"
-        project: "{{ project_name }}"
-        inventory: "{{ lab_inventory }}"
-        playbook: playbooks/91_windows_connectivity_check.yml
-        credentials: ["{{ win_machine_credential }}"]
-        limit: win_targets
-        state: present
-      when: win_signed_cred.json.count | int > 0
+      loop: "{{ test_templates }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: >-
+        (signed_creds.results | selectattr('item', 'equalto', item.cred) | first).json.count | int > 0
 
     - name: End-to-end workflow
       awx.awx.workflow_job_template:
         name: "{{ workflow_name }}"
         organization: "{{ controller_org }}"
-        description: RHEL template, RHEL + Windows VMs, Vault, SSH CA, AAP credentials, verification
+        description: Templates, RHEL + Windows VMs, Vault SSH CA, CA trust, AAP signed credentials, verification
         ask_variables_on_launch: true
         destroy_current_nodes: true
         workflow_nodes: >-
