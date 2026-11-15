@@ -1,0 +1,100 @@
+# Windows targets: install OpenSSH Server, trust the Vault SSH CA, and create
+# the local svc_aap account. Connects once over WinRM as the local Administrator
+# (password = labadmin password from homelab-lab-secrets). After this job, AAP
+# reaches these hosts over SSH with a Vault-signed certificate, like RHEL.
+# Needs inventory var vault_ssh_ca_public_key (written by job 50).
+# Credentials: homelab-lab-secrets
+- name: Windows OpenSSH trusts the Vault SSH CA
+  hosts: win_targets
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lookup('env', 'PKR_VAR_build_password') }}"
+    ssh_dir: C:\ProgramData\ssh
+  pre_tasks:
+    - name: CA public key is published in the inventory
+      ansible.builtin.assert:
+        that: vault_ssh_ca_public_key is defined and vault_ssh_ca_public_key is match('^(ssh-|ecdsa-)')
+        fail_msg: Run "homelab 50 - configure Vault SSH CA" first; it publishes vault_ssh_ca_public_key.
+      run_once: true
+      delegate_to: localhost
+
+    - name: WinRM reachable
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+  tasks:
+    - name: OpenSSH Server feature
+      ansible.windows.win_powershell:
+        script: |
+          $cap = Get-WindowsCapability -Online -Name 'OpenSSH.Server*'
+          if ($cap.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name $cap.Name | Out-Null
+            $Ansible.Changed = $true
+          } else { $Ansible.Changed = $false }
+
+    - name: sshd starts automatically and is running
+      ansible.windows.win_service:
+        name: sshd
+        start_mode: auto
+        state: started
+
+    - name: Firewall allows SSH on all profiles
+      ansible.windows.win_powershell:
+        script: |
+          $r = Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue
+          if (-not $r) {
+            New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' `
+              -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -Profile Any | Out-Null
+            $Ansible.Changed = $true
+          } elseif ($r.Enabled -ne 'True' -or $r.Profile -ne 'Any') {
+            Set-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -Enabled True -Profile Any
+            $Ansible.Changed = $true
+          } else { $Ansible.Changed = $false }
+
+    - name: PowerShell as the SSH default shell (what Ansible expects)
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\OpenSSH
+        name: DefaultShell
+        data: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+        type: string
+
+    - name: Full admin token for local admins over the network (lab)
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+        name: LocalAccountTokenFilterPolicy
+        data: 1
+        type: dword
+
+    - name: Local service account svc_aap (random password nobody knows)
+      ansible.windows.win_user:
+        name: "{{ aap_ssh_user }}"
+        password: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits', '@#%+=']) }}Aa1!"
+        update_password: on_create
+        password_never_expires: true
+        account_disabled: false
+        groups: [Administrators]
+        groups_action: add
+        description: AAP automation account, login only with a Vault-signed SSH certificate
+      no_log: true
+
+    - name: Vault CA public key
+      ansible.windows.win_copy:
+        content: "{{ vault_ssh_ca_public_key | trim }}\n"
+        dest: '{{ ssh_dir }}\trusted-user-ca-keys.pem'
+      notify: restart sshd
+
+    - name: sshd trusts the CA (above the Match block)
+      community.windows.win_lineinfile:
+        path: '{{ ssh_dir }}\sshd_config'
+        regex: '^#?\s*TrustedUserCAKeys\s'
+        line: TrustedUserCAKeys __PROGRAMDATA__/ssh/trusted-user-ca-keys.pem
+        insertbefore: '^Match '
+      notify: restart sshd
+
+  handlers:
+    - name: restart sshd
+      ansible.windows.win_service:
+        name: sshd
+        state: restarted

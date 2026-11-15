@@ -1,0 +1,43 @@
+# Basic connectivity check on the Windows targets using only the Vault-signed
+# certificate over OpenSSH: ping, hostname, login user, OS, uptime, and the
+# certificate key ID that sshd accepted for this login.
+# Credentials: win-svc-aap-signed (only)
+- name: Windows connectivity check with a Vault-signed certificate
+  hosts: win_targets
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  vars:
+    ansible_connection: ssh
+    ansible_shell_type: powershell
+    ansible_port: 22
+  tasks:
+    - name: Ping
+      ansible.windows.win_ping:
+
+    - name: Host, user, OS, uptime and accepted certificate
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $os = Get-CimInstance Win32_OperatingSystem
+          $up = (Get-Date) - $os.LastBootUpTime
+          $ev = Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 100 -ErrorAction SilentlyContinue |
+                Where-Object { $_.Message -match 'ID aap-' } | Select-Object -First 1
+          [pscustomobject]@{
+            host   = $env:COMPUTERNAME
+            domain = (Get-CimInstance Win32_ComputerSystem).Domain
+            user   = (whoami)
+            os     = $os.Caption
+            uptime = '{0}d {1}h {2}m' -f $up.Days, $up.Hours, $up.Minutes
+            cert   = if ($ev) { [regex]::Match($ev.Message, 'ID aap-\S+ \(serial \d+\)').Value } else { '' }
+          }
+      register: info
+
+    - name: Result
+      ansible.builtin.debug:
+        msg:
+          - "Host:         {{ info.output[0].host }} ({{ ansible_host }}), domain {{ info.output[0].domain }}"
+          - "Logged in as: {{ info.output[0].user }}"
+          - "OS:           {{ info.output[0].os }}"
+          - "Uptime:       {{ info.output[0].uptime }}"
+          - "Certificate:  {{ info.output[0].cert or 'not found in OpenSSH/Operational log' }}"

@@ -29,14 +29,17 @@
       - { name: homelab-vcenter, type: VMware vCenter }
       - { name: homelab-lab-secrets, type: Homelab lab secrets }
       - { name: homelab-labadmin, type: Machine (username labadmin + password) }
-      - { name: homelab-aap-api, type: Red Hat Ansible Automation Platform (host + token) }
+      - { name: homelab-aap-api, type: Red Hat Ansible Automation Platform (host https://host.containers.internal + token) }
+      - { name: homelab-domain-join, type: Homelab domain join }
     job_templates:
       - { id: build, name: "homelab 10 - build RHEL 10 template", playbook: playbooks/10_build_template.yml, creds: [homelab-vcenter, homelab-lab-secrets], ask_vars: true }
       - { id: provision, name: "homelab 20 - provision VMs", playbook: playbooks/20_provision_vms.yml, creds: [homelab-vcenter, homelab-aap-api] }
+      - { id: provision_win, name: "homelab 21 - provision Windows VMs", playbook: playbooks/21_provision_windows_vms.yml, creds: [homelab-vcenter, homelab-lab-secrets, homelab-domain-join, homelab-aap-api] }
       - { id: bootstrap, name: "homelab 30 - bootstrap hosts", playbook: playbooks/30_bootstrap_hosts.yml, creds: [homelab-labadmin, homelab-lab-secrets] }
       - { id: vault_install, name: "homelab 40 - install Vault", playbook: playbooks/40_vault_install.yml, creds: [homelab-labadmin] }
       - { id: vault_configure, name: "homelab 50 - configure Vault SSH CA", playbook: playbooks/50_vault_configure.yml, creds: [homelab-labadmin, homelab-aap-api] }
       - { id: ca_trust, name: "homelab 60 - trust SSH CA on targets", playbook: playbooks/60_ssh_ca_trust.yml, creds: [homelab-labadmin] }
+      - { id: win_trust, name: "homelab 61 - Windows OpenSSH + trust SSH CA", playbook: playbooks/61_windows_ssh_ca_trust.yml, creds: [homelab-lab-secrets] }
       - { id: verify, name: "homelab 70 - verify signed SSH", playbook: playbooks/70_verify.yml, creds: [homelab-aap-api] }
   environment:
     CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX: /api/controller/
@@ -57,6 +60,22 @@
             PKR_VAR_build_password: !unsafe "{{ build_password }}"
             RHSM_USERNAME: !unsafe "{{ rhsm_username }}"
             RHSM_PASSWORD: !unsafe "{{ rhsm_password }}"
+        state: present
+
+    - name: Credential type for the AD domain join account
+      awx.awx.credential_type:
+        name: Homelab domain join
+        kind: cloud
+        description: Account that joins the lab Windows VMs to homelab.local
+        inputs:
+          fields:
+            - { id: domain_join_user, type: string, label: Domain join user (e.g. administrator@homelab.local) }
+            - { id: domain_join_password, type: string, label: Domain join password, secret: true }
+          required: [domain_join_user, domain_join_password]
+        injectors:
+          env:
+            DOMAIN_JOIN_USER: !unsafe "{{ domain_join_user }}"
+            DOMAIN_JOIN_PASSWORD: !unsafe "{{ domain_join_password }}"
         state: present
 
     - name: Current job isolation paths
@@ -168,11 +187,30 @@
         state: present
       when: signed_cred.json.count | int > 0
 
+    - name: Does the Windows Vault-signed credential exist yet
+      ansible.builtin.uri:
+        url: "{{ controller_api }}/credentials/?name={{ win_machine_credential | urlencode }}"
+        headers: "{{ api_headers }}"
+        validate_certs: false
+      register: win_signed_cred
+
+    - name: Job template - Windows connectivity check with the signed certificate
+      awx.awx.job_template:
+        name: "homelab 91 - Windows connectivity check (signed cert)"
+        organization: "{{ controller_org }}"
+        project: "{{ project_name }}"
+        inventory: "{{ lab_inventory }}"
+        playbook: playbooks/91_windows_connectivity_check.yml
+        credentials: ["{{ win_machine_credential }}"]
+        limit: win_targets
+        state: present
+      when: win_signed_cred.json.count | int > 0
+
     - name: End-to-end workflow
       awx.awx.workflow_job_template:
         name: "{{ workflow_name }}"
         organization: "{{ controller_org }}"
-        description: Template, VMs, Vault, SSH CA, AAP credentials, verification
+        description: RHEL template, RHEL + Windows VMs, Vault, SSH CA, AAP credentials, verification
         ask_variables_on_launch: true
         destroy_current_nodes: true
         workflow_nodes: >-

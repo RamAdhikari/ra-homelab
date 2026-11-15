@@ -26,3 +26,33 @@
         that: adhoc.status | default('') == 'successful'
         fail_msg: "Ad hoc job {{ adhoc.id | default('?') }} ended {{ adhoc.status | default('unknown') }}. Open it in AAP for the per-host error."
         success_msg: "Ad hoc job {{ adhoc.id }} logged in as {{ aap_ssh_user }} with a Vault-signed certificate."
+
+    - name: Windows targets in the inventory
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'CONTROLLER_HOST') | regex_replace('/$', '') }}/api/controller/v2/groups/?name=win_targets&inventory__name={{ lab_inventory | urlencode }}"
+        headers:
+          Authorization: "Bearer {{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') }}"
+        validate_certs: false
+      register: win_group
+
+    - name: Ad hoc win_ping on the Windows targets with the signed credential (OpenSSH)
+      awx.awx.ad_hoc_command:
+        inventory: "{{ lab_inventory }}"
+        credential: "{{ win_machine_credential }}"
+        module_name: win_ping
+        limit: win_targets
+        extra_vars:
+          ansible_connection: ssh
+          ansible_shell_type: powershell
+          ansible_port: 22
+        wait: true
+        timeout: 300
+      register: adhoc_win
+      when: win_group.json.count | int > 0
+
+    - name: Windows succeeded
+      ansible.builtin.assert:
+        that: adhoc_win.status | default('') == 'successful'
+        fail_msg: "Windows ad hoc job {{ adhoc_win.id | default('?') }} ended {{ adhoc_win.status | default('unknown') }}. Open it in AAP for the per-host error."
+        success_msg: "Ad hoc job {{ adhoc_win.id }} reached the Windows targets as {{ aap_ssh_user }} over OpenSSH with a Vault-signed certificate."
+      when: win_group.json.count | int > 0

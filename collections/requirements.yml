@@ -2,3 +2,5 @@
 # awx.awx is the upstream of ansible.controller; same modules, no Automation Hub token needed.
 collections:
   - name: awx.awx
+  - name: ansible.windows
+  - name: community.windows

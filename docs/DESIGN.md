@@ -1,111 +1,138 @@
-# ra-homelab design: AAP logs in to RHEL with Vault-signed SSH certificates
+# ra-homelab design: just-in-time SSH certificates for AAP
 
 | | |
 | --- | --- |
-| Status | Built and seeded in AAP; first end-to-end workflow run pending |
+| Status | RHEL: built and verified end to end. Windows: code complete, first run pending |
 | Owner | Ram Adhikari |
 | Last updated | 2026-11-15 |
 | Repo | `github.com/RamAdhikari/ra-homelab` |
 
-## 1. Summary
+## 1. In one paragraph
 
-Red Hat Ansible Automation Platform (AAP) connects to RHEL hosts with short-lived
-SSH certificates signed by a HashiCorp Vault SSH certificate authority, instead
-of a long-lived key in `authorized_keys`. AAP fetches a fresh certificate (valid
-2 hours) from Vault every time a job starts; each host trusts the Vault CA's
-public key and nothing else changes on it.
+Ansible Automation Platform (AAP) logs in to Linux and Windows servers **without
+any stored password or long-lived SSH key**. Every time a job starts, AAP asks
+HashiCorp Vault to sign a fresh SSH certificate that is valid for **2 hours** and
+only for the user `svc_aap`. The servers trust Vault's certificate authority (CA),
+so they accept the certificate, and nothing else, for that user. When the job ends
+the certificate is thrown away with the job's temporary container, and it expires
+on its own soon after. The whole lab, from building VM templates to proving the
+login works, is code in this repo, run by one AAP workflow.
 
-The whole lab, from the RHEL template to the final login test, is built by one
-AAP workflow from this repo. Nothing runs on the Mac except a one-time seed of
-the AAP objects.
+### Words used in this document
+
+| Term | Meaning here |
+| --- | --- |
+| **SSH CA** | A key pair in Vault. Its private half signs certificates; its public half is copied to every server |
+| **SSH certificate** | A user's public key plus Vault's signature, a list of allowed usernames (principals) and an expiry time |
+| **Principal** | A username the certificate is valid for. Ours is only `svc_aap` |
+| **JIT (just in time)** | The certificate is created at job start, used for that job, and expires shortly after |
+| **svc_aap** | The local service account on each server that AAP logs in as |
+| **AppRole** | How AAP proves its identity to Vault (a role ID plus a secret ID) |
+| **Job template / workflow** | An AAP job definition / a chain of job templates |
 
 ### Goals
 
-- Prove the Vault SSH CA pattern end to end before using it on the work fleet.
-- Every step as code in git, run by AAP, safe to rerun.
-- No secrets in git: all secrets live in AAP credentials or on the Vault VM.
+- Prove JIT certificate access from AAP to RHEL **and** Windows before using it on the work fleet.
+- Everything as code in git, run by AAP, safe to rerun.
+- No secrets in git: secrets live only in AAP credentials and on the Vault VM.
 
-### Non-goals
+### Not in scope
 
-- Production-grade Vault (HA, auto-unseal with a KMS or HSM, CA-issued TLS).
-  Section 11 lists what changes for production.
-- Windows hosts, host-key signing, human SSH access.
+- Production-grade Vault (high availability, KMS auto-unseal, CA-issued TLS). Section 12 lists the differences.
+- Human SSH access and SSH host-key signing.
 
-## 2. Lab environment
+## 2. The lab
 
 ```mermaid
 flowchart LR
-  subgraph Mac["iMac (VMware Fusion)"]
+  subgraph Mac["iMac · VMware Fusion"]
     subgraph E156["ESXi 192.168.1.156"]
-      VC["vCenter VCSA<br/>vcsa.homelab.local<br/>192.168.1.157"]
+      VC["vCenter<br/>vcsa.homelab.local"]
     end
     subgraph E155["ESXi 192.168.1.155 · datastore LocalDS"]
-      T["tmpl-rhel10<br/>(template)"]
-      V["lab-vault01<br/>192.168.1.29"]
-      R1["lab-rhel01<br/>192.168.1.27"]
-      R2["lab-rhel02<br/>192.168.1.28"]
+      V["lab-vault01 .29<br/>Vault"]
+      R["lab-rhel01 .27<br/>lab-rhel02 .28"]
+      W["lab-win01<br/>lab-win02"]
+      T["Templates<br/>tmpl-rhel10<br/>Win2022-VM-Template"]
     end
   end
-  AAP["AAP<br/>aap.lab.local"]
-  DNS["AD DNS<br/>192.168.1.200<br/>homelab.local"]
-  GH["GitHub<br/>RamAdhikari/ra-homelab"]
+  AAP["AAP<br/>aap.lab.local (.58)"]
+  DNS["AD DNS / DC<br/>192.168.1.200<br/>homelab.local"]
+  GH["GitHub<br/>ra-homelab"]
   GH -->|project sync| AAP
   AAP -->|Packer, Terraform| VC
-  AAP -->|SSH| V & R1 & R2
+  AAP -->|SSH + certificate| R & W
+  AAP -->|AppRole, sign| V
+  W -->|domain member| DNS
 ```
 
 | Component | Address | Notes |
 | --- | --- | --- |
-| vCenter | `vcsa.homelab.local` (192.168.1.157) | VCSA on ESXi .156; datacenter `Virtual_DC`, cluster `My_Cluster`, SSO domain `homelab.local` |
+| vCenter | `vcsa.homelab.local` (.157) | Datacenter `Virtual_DC`, cluster `My_Cluster`, SSO domain `homelab.local` |
 | Workload ESXi | 192.168.1.155 | Datastore `LocalDS`, port group `VM Network`, folders `Templates`, `MyVMs` |
-| AAP | `https://aap.lab.local` | Controller API at `/api/controller/v2/` (AAP 2.5+ gateway) |
-| AD DNS | 192.168.1.200 | Domain `homelab.local`; lab VMs are **not** registered in DNS |
-| RHEL template | `tmpl-rhel10` | RHEL 10.1, built by Packer |
-| Vault | `lab-vault01` (192.168.1.29) | Single node, port 8200 |
-| SSH targets | `lab-rhel01` (.27), `lab-rhel02` (.28) | Trust the Vault CA |
+| AAP | `https://aap.lab.local` (.58) | Jobs reach it as `https://host.containers.internal` (section 13) |
+| AD DNS / domain controller | 192.168.1.200 | Domain `homelab.local` |
+| Vault | `lab-vault01` (.29) | Single node, port 8200, web UI at `/ui` |
+| RHEL targets | `lab-rhel01` (.27), `lab-rhel02` (.28) | RHEL 10.1, not in DNS |
+| Windows targets | `lab-win01`, `lab-win02` | Windows Server 2022, joined to `homelab.local` |
 
-VM addresses come from DHCP. Job 20 rewrites them into the AAP inventory on every run.
+All VMs use DHCP. Jobs 20 and 21 write the current addresses into the AAP inventory on every run.
 
-## 3. How a signed login works
+## 3. How a just-in-time login works
+
+The flow is identical for RHEL and Windows; only the server side differs (OpenSSH
+on Linux, OpenSSH Server for Windows).
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant J as AAP job
-  participant V as Vault (lab-vault01)
-  participant H as RHEL target
-  Note over H: One-time (job 60): sshd trusts the Vault CA public key<br/>TrustedUserCAKeys /etc/ssh/trusted-user-ca-keys.pem
-  J->>V: AppRole login (role_id + secret_id)
-  V-->>J: Vault token (10 min, policy aap-ssh-sign)
-  J->>V: POST ssh-client-signer/sign/aap-linux<br/>public key, principal svc_aap
-  V-->>J: Signed certificate (2 h)
+  participant V as Vault
+  participant H as Server (RHEL or Windows)
+  Note over H: Set up once (jobs 60 / 61):<br/>sshd trusts the Vault CA public key,<br/>local user svc_aap exists
+  J->>V: AppRole login (role ID + secret ID)
+  V-->>J: Vault token, 10 min, may only sign
+  J->>V: Sign this public key for principal svc_aap
+  V-->>J: Certificate, valid 2 hours
   J->>H: SSH as svc_aap with private key + certificate
-  H->>H: Check signature against CA key,<br/>principal = svc_aap, not expired
-  H-->>J: Login accepted
+  H->>H: Signed by trusted CA? principal svc_aap? not expired?
+  H-->>J: Login accepted, job runs
+  Note over J: Job ends: container and certificate are destroyed
 ```
 
-AAP does steps 1 to 4 automatically through its built-in **HashiCorp Vault
-Signed SSH** credential type: the Machine credential's "Signed SSH Certificate"
-field is linked to it, so the certificate is fetched at job launch.
+Steps 1 to 4 are done by AAP's built-in **HashiCorp Vault Signed SSH** credential
+type. The Machine credential's "Signed SSH Certificate" field is linked to it, so
+the certificate is fetched automatically at every launch.
 
-The host never contacts Vault. It validates the certificate offline against the
-CA public key, so Vault only needs to be reachable from AAP. If Vault is down,
-running jobs continue but new jobs cannot start.
+The servers never contact Vault. They check the certificate offline against the CA
+public key. Vault only needs to be reachable from AAP; if Vault is down, running
+jobs continue but new jobs cannot start.
+
+| Property | How it is achieved |
+| --- | --- |
+| Issued per job | The certificate field is a Vault lookup that AAP runs at every job launch |
+| Short-lived | Vault role TTL = max TTL = `ssh_cert_ttl` (7200 s, `vars/lab.yml`) |
+| Not kept after the job | Key and certificate exist only in the job's temporary container and ssh-agent |
+| One user only | The only principal is `svc_aap` |
+| Traceable | Vault audit log records every signing; each server logs the certificate key ID and serial |
+
+SSH certificates cannot be revoked one by one without a revocation list (KRL), so
+the short lifetime is the control. A job longer than 2 hours keeps its open
+connections but cannot open new ones; raise `ssh_cert_ttl` for such jobs.
 
 ## 4. The svc_aap service account
 
-`svc_aap` is a local Linux user on each RHEL target that exists only for AAP to
-log in as. It has no password and no `authorized_keys`: the only way in is an
-SSH certificate signed by the Vault CA whose principal is `svc_aap`.
+`svc_aap` is a **local** account on each server that exists only for AAP. It has no
+usable password and no `authorized_keys`, so the only way in is a Vault-signed
+certificate whose principal is `svc_aap`.
 
-| Property | Setting | Set by |
+| Property | RHEL | Windows |
 | --- | --- | --- |
-| Account | Local user `svc_aap`, shell `/bin/bash` (not an AD account) | Job 60 |
-| Password | Locked | Job 60 |
-| `authorized_keys` | Empty; no static key works | Job 60 (never created) |
-| How it logs in | SSH certificate signed by the Vault CA, principal `svc_aap` | Vault role `aap-linux` |
-| Privilege | Passwordless sudo, `ALL` (lab); limit to what automation needs in production | Job 60 |
-| Name | `aap_ssh_user: svc_aap` in `vars/lab.yml` | |
+| Account | Local user, `/bin/bash` | Local user (not a domain account) |
+| Password | Locked | Random 36 characters, never stored or shown |
+| Static keys | None | None |
+| Privilege | Passwordless sudo (`ALL`, lab) | Member of local Administrators |
+| Created by | Job 60 | Job 61 |
 
 ### Trust chain
 
@@ -113,286 +140,287 @@ SSH certificate signed by the Vault CA whose principal is `svc_aap`.
 flowchart LR
   subgraph Vault["Vault (lab-vault01)"]
     CA["SSH CA private key<br/>mount ssh-client-signer"]
-    Role["Role aap-linux<br/>principals: svc_aap only<br/>TTL 2 h"]
+    Role["Role aap-linux<br/>principal svc_aap only, 2 h"]
   end
-  subgraph AAP["AAP"]
-    Signer["Credential vault-ssh-signer<br/>AppRole login"]
-    Machine["Credential rhel-svc-aap-signed<br/>user svc_aap + private key"]
+  subgraph AAP["AAP credentials"]
+    Signer["vault-ssh-signer<br/>AppRole login"]
+    M1["rhel-svc-aap-signed"]
+    M2["win-svc-aap-signed"]
   end
-  subgraph Host["RHEL target"]
-    Trust["/etc/ssh/trusted-user-ca-keys.pem<br/>CA public key"]
-    Acct["Local user svc_aap<br/>password locked, no authorized_keys"]
+  subgraph Servers["Servers"]
+    L["RHEL: /etc/ssh/trusted-user-ca-keys.pem"]
+    WN["Windows: C:\ProgramData\ssh\trusted-user-ca-keys.pem"]
+    U["Local user svc_aap"]
   end
-  CA -->|public key, pushed once by job 60| Trust
-  Machine -->|public key to sign| Signer
-  Signer -->|AppRole + sign request| Role
-  Role -->|certificate for svc_aap, 2 h| Machine
-  Machine -->|SSH as svc_aap with key + certificate| Acct
-  Trust -.->|sshd checks signature| Acct
+  CA -->|public key, copied once| L & WN
+  M1 & M2 -->|public key to sign| Signer
+  Signer -->|AppRole + sign| Role
+  Role -->|certificate, 2 h| M1 & M2
+  M1 & M2 -->|SSH as svc_aap| U
 ```
 
-### What sshd checks at each login
+Both Machine credentials hold the **same** `svc_aap` key and fetch a certificate the
+same way; there are two only so job templates read clearly per OS.
+
+### What the server checks at every login
 
 ```mermaid
 flowchart TD
-  A["AAP connects as svc_aap<br/>presents key + certificate"] --> B{"Signed by a key in<br/>TrustedUserCAKeys?"}
+  A["AAP connects as svc_aap<br/>with key + certificate"] --> B{"Signed by a key in<br/>TrustedUserCAKeys?"}
   B -- no --> X["Rejected"]
-  B -- yes --> C{"Principal list<br/>contains svc_aap?"}
+  B -- yes --> C{"Principals include<br/>svc_aap?"}
   C -- no --> X
-  C -- yes --> D{"Inside the validity<br/>window (2 h)?"}
+  C -- yes --> D{"Within its 2-hour<br/>validity window?"}
   D -- no --> X
-  D -- yes --> E["Login accepted<br/>sshd logs key ID + serial"]
-  E --> F["Ansible runs tasks,<br/>sudo for become"]
+  D -- yes --> E["Accepted<br/>key ID + serial logged"]
 ```
 
-A leaked certificate cannot log in as root or any other user, because its only
-principal is `svc_aap`, and it stops working within 2 hours. The private key
-alone is useless: no host has it in `authorized_keys`.
+A leaked certificate cannot be used for root, Administrator or any other user, and
+stops working within 2 hours. The private key alone is useless because no server
+has it in `authorized_keys`.
 
-### Seeing it work
+## 5. Automation: what runs where
 
-| Job template | What it shows |
-| --- | --- |
-| `homelab 90 - connectivity check (signed cert)` | Per target: ping, hostname, login user (`svc_aap`), OS, uptime, accepted certificate key ID and serial |
-| `homelab 80 - run job with JIT certificate` | The certificate issued for the run (key ID, serial, principal, validity) and sudo working |
-
-Both use only `rhel-svc-aap-signed`. Each run gets a new certificate, so the
-serial changes from run to run.
-
-## 5. Automation design
-
-### 4.1 Repo layout
-
-```
-aap/seed.yml                   AAP config as code: credential type, project, inventory,
-                               job templates, workflow, state-path setting
-playbooks/10_build_template.yml  ... 70_verify.yml   one playbook per job template
-playbooks/tasks/terraform.yml  shared Terraform runner (init, plan, apply on change, outputs)
-playbooks/templates/vault.hcl.j2
-roles/hashicorp_tools/         downloads pinned Packer and Terraform into the job container
-packer/rhel10/                 vsphere-iso build + kickstart template
-terraform/rhel-vms/            VM clones
-terraform/vault-config/        Vault SSH CA, policy, AppRole
-vars/lab.yml                   shared non-secret settings
-collections/requirements.yml   awx.awx, installed by AAP on project sync
-```
-
-### 4.2 AAP objects
-
-| Object | Name | Created by |
-| --- | --- | --- |
-| Project | `ra-homelab` (git, branch `main`, update on launch) | seed |
-| Inventory | `homelab-rhel-lab`, groups `vault`, `rhel_targets` | seed; hosts written by job 20 |
-| Credential type | `Homelab lab secrets` (build password, Red Hat login) | seed |
-| Workflow | `homelab - Vault SSH lab (end to end)` | seed |
-| Job templates | `homelab 10` … `homelab 70` (below) | seed |
-| Setting | `AWX_ISOLATION_SHOW_PATHS` += `/var/lib/homelab-tfstate` | seed |
-| Credentials with secrets | `homelab-github`, `homelab-vcenter`, `homelab-labadmin`, `homelab-aap-api`, `homelab-lab-secrets` | you, in the UI |
-| Generated credentials | `vault-ssh-signer`, `rhel-svc-aap-signed` | job 50 |
-
-| Credential | Type | Used by | Provides |
-| --- | --- | --- | --- |
-| `homelab-github` | Source Control | project | GitHub PAT for the private repo |
-| `homelab-vcenter` | VMware vCenter | 10, 20 | `VMWARE_HOST/USER/PASSWORD` for Packer and Terraform |
-| `homelab-lab-secrets` | Homelab lab secrets | 10, 30 | `PKR_VAR_build_password`, `RHSM_USERNAME`, `RHSM_PASSWORD` |
-| `homelab-labadmin` | Machine | 30, 40, 50, 60 | SSH as `labadmin` (passwordless sudo) |
-| `homelab-aap-api` | Red Hat Ansible Automation Platform | 20, 50, 70 | API token so jobs can update AAP itself. Host must be `https://host.containers.internal` (see section 13) |
-| `vault-ssh-signer` | HashiCorp Vault Signed SSH | `rhel-svc-aap-signed` | Vault URL, AppRole role_id + secret_id, Vault CA cert |
-| `rhel-svc-aap-signed` | Machine | 70, and any future job | `svc_aap` + private key; certificate fetched from Vault at launch |
-
-### 4.3 The workflow
+### 5.1 One workflow
 
 ```mermaid
 flowchart LR
-  A["10 Build template<br/>Packer"] --> B["20 Provision VMs<br/>Terraform"] --> C["30 Bootstrap<br/>hostname, RHSM"] --> D["40 Install Vault<br/>init, unseal"]
-  D --> E["50 Vault SSH CA<br/>Terraform + AAP creds"] --> F["60 Trust CA<br/>targets"] --> G["70 Verify<br/>signed login"]
+  T10["10 RHEL template<br/>Packer"] --> T20["20 RHEL VMs<br/>Terraform"] --> T21["21 Windows VMs<br/>Terraform + domain join"] --> T30["30 RHEL bootstrap<br/>hostname, Red Hat"]
+  T30 --> T40["40 Vault<br/>install, init"] --> T50["50 Vault SSH CA<br/>+ AAP credentials"] --> T60["60 RHEL trust CA"] --> T61["61 Windows OpenSSH<br/>+ trust CA"] --> T70["70 Verify<br/>RHEL + Windows"]
 ```
 
-Each node runs only if the previous one succeeded. Every job is idempotent.
+AAP › Templates › **homelab - Vault SSH lab (end to end)** › Launch. Each step runs
+only if the previous one succeeded, and every step is safe to rerun.
 
-| Job | Runs on | What it does | Idempotence |
-| --- | --- | --- | --- |
-| 10 build template | job container | Asks the vCenter API whether `tmpl-rhel10` exists; if not (or `rebuild_template=true`), runs `packer build` | Skips Packer entirely when the template exists |
-| 20 provision VMs | job container | Terraform clones 3 VMs; writes hosts, IPs and groups into the AAP inventory | Terraform plan: applies only on changes |
-| 30 bootstrap hosts | lab VMs | Hostname, `/etc/hosts` for all lab VMs, Red Hat registration, repo check | Registers only if `subscription-manager identity` fails |
-| 40 install Vault | lab-vault01 | HashiCorp repo, Vault, self-signed TLS, config, firewall, init, unseal, boot-time unseal service, file audit device | Init only when uninitialised; unseal only when sealed |
-| 50 configure Vault SSH CA | vault + job container | Terraform for mount, CA, role, policy, AppRole; new secret_id; fresh AAP keypair; creates/updates the two AAP credentials | Terraform plan; credentials updated in place (rotates secret_id and key each run) |
-| 60 trust SSH CA | rhel_targets | `svc_aap` user + sudo, CA public key file, `TrustedUserCAKeys` in sshd | File and line modules |
-| 70 verify | job container | AAP ad hoc `id -un` on `rhel_targets` with `rhel-svc-aap-signed` | Read-only |
+| # | Job template | Runs on | What it does | Rerun behaviour |
+| --- | --- | --- | --- | --- |
+| 10 | build RHEL 10 template | job container | Packer builds `tmpl-rhel10` | Skips if it exists; `rebuild_template=true` replaces it |
+| 20 | provision VMs | job container | Terraform clones Vault + 2 RHEL VMs; writes IPs to the inventory | Plans first, applies only changes |
+| 21 | provision Windows VMs | job container | Terraform clones 2 Windows VMs from `Win2022-VM-Template`, sets the local Administrator password, joins `homelab.local`; writes IPs and WinRM settings to the inventory | Plans first, applies only changes |
+| 30 | bootstrap hosts | Vault + RHEL VMs | Hostname, `/etc/hosts`, Red Hat registration, Red Hat release key 4 | Registers only if not registered |
+| 40 | install Vault | lab-vault01 | Signing keys, Vault, TLS, config, firewall, init, unseal, boot-time unseal, audit log | Init only once; unseal only if sealed |
+| 50 | configure Vault SSH CA | Vault + job container | Terraform: CA, role, policy, AppRole. New secret ID and key; creates/updates both Machine credentials; publishes the CA public key as an inventory variable | Rotates the secret ID and key each run |
+| 60 | trust SSH CA on targets | RHEL VMs | `svc_aap` + sudo, CA key file, `TrustedUserCAKeys` | Idempotent |
+| 61 | Windows OpenSSH + trust SSH CA | Windows VMs (WinRM, once) | OpenSSH Server, firewall, PowerShell default shell, `svc_aap` in Administrators, CA key file, `TrustedUserCAKeys` | Idempotent |
+| 70 | verify signed SSH | job container | Ad hoc `id -un` on RHEL and `win_ping` on Windows, both with signed credentials only | Read-only |
 
-### 4.4 Tools inside the job container
+### 5.2 Test job templates
 
-AAP runs jobs in its default execution environment. Rather than building a
-custom image, `roles/hashicorp_tools` downloads pinned releases (Packer 1.11.2,
-Terraform 1.9.8) from `releases.hashicorp.com`, verifies them against the
-published SHA256SUMS, and extracts them under `/tmp/hc-tools`. Packer plugins
-download from GitHub at run time.
+| Job template | Credential | Shows |
+| --- | --- | --- |
+| homelab 90 - connectivity check (signed cert) | `rhel-svc-aap-signed` | Per RHEL host: ping, hostname, user, OS, uptime, accepted certificate ID and serial |
+| homelab 91 - Windows connectivity check (signed cert) | `win-svc-aap-signed` | Per Windows host: ping, hostname, domain, user, OS, uptime, accepted certificate ID and serial |
+| homelab 80 - run job with JIT certificate | `rhel-svc-aap-signed` | The certificate issued for the run (key ID, serial, principal, validity) and sudo working |
 
-Terraform providers (vsphere 2.12.0, vault 4.4.0) are fetched the same way from
-`releases.hashicorp.com` into a local filesystem mirror, and a CLI config file
-(`TF_CLI_CONFIG_FILE`) tells Terraform to install only from that mirror. The
-job container could not reach `registry.terraform.io` reliably.
+Run any of them twice: the serial changes, because each run gets a new certificate.
 
-Packer builds the kickstart CD with `xorriso` or `mkisofs`, and the default
-execution environment has neither. For a build, job 10 installs `pycdlib` with
-pip and puts a small `mkisofs` stand-in (`roles/hashicorp_tools/files/mkisofs`)
-first on `PATH`. It writes an ISO 9660 image with Joliet and Rock Ridge, so the
-installer sees `ks.cfg` under its real name. The AAP node therefore needs
-outbound HTTPS to HashiCorp, GitHub, Galaxy and PyPI.
+### 5.3 AAP objects
 
-### 4.5 Terraform state
+| Object | Name | Created by |
+| --- | --- | --- |
+| Project | `ra-homelab` (git `main`, update on launch) | `aap/seed.yml` |
+| Inventory | `homelab-rhel-lab`: groups `vault`, `rhel_targets`, `win_targets` | Seed; hosts by jobs 20/21; variables by job 50 |
+| Credential types | `Homelab lab secrets`, `Homelab domain join` | Seed |
+| Job templates and workflow | Section 5.1 and 5.2 | Seed (80/90/91 once their credentials exist) |
+| Setting | `AWX_ISOLATION_SHOW_PATHS` += `/var/lib/homelab-tfstate` | Seed |
 
-Job containers are thrown away after each job, so state lives on the AAP host
-at `/var/lib/homelab-tfstate`, exposed to every job through AAP's
-"Paths to expose to isolated jobs" setting.
+### 5.4 Credentials
+
+| Credential | Type | Holds | Used by | Who creates it |
+| --- | --- | --- | --- | --- |
+| `homelab-github` | Source Control | GitHub PAT | Project | You |
+| `homelab-vcenter` | VMware vCenter | vCenter user and password | 10, 20, 21 | You |
+| `homelab-lab-secrets` | Homelab lab secrets | `labadmin` password (also the Windows local Administrator password), Red Hat login | 10, 21, 30, 61 | You |
+| `homelab-domain-join` | Homelab domain join | AD account that joins Windows VMs | 21 | You |
+| `homelab-labadmin` | Machine | `labadmin` + password (RHEL bootstrap) | 30, 40, 50, 60 | You |
+| `homelab-aap-api` | Red Hat AAP | Host `https://host.containers.internal`, API token | 20, 21, 50, 70 | You |
+| `vault-ssh-signer` | HashiCorp Vault Signed SSH | Vault URL, AppRole role ID + secret ID, Vault CA cert | The two below | Job 50 |
+| `rhel-svc-aap-signed` | Machine | `svc_aap` + private key; certificate from Vault at launch | 80, 90, 70 | Job 50 |
+| `win-svc-aap-signed` | Machine | Same key; certificate from Vault at launch | 91, 70 | Job 50 |
+
+### 5.5 Inside the job container
+
+AAP runs every job in its default execution environment. Nothing extra is baked in:
+
+- **Packer 1.11.2 and Terraform 1.9.8** are downloaded per job from `releases.hashicorp.com`, checked against the published SHA256 sums (`roles/hashicorp_tools`).
+- **Terraform providers** (vsphere 2.12.0, vault 4.4.0) are downloaded the same way into a local mirror; `TF_CLI_CONFIG_FILE` makes Terraform use only that mirror, because `registry.terraform.io` was unreachable from jobs.
+- **Kickstart CD for Packer**: there is no `xorriso`/`mkisofs` in the image, so job 10 installs `pycdlib` and puts a small `mkisofs` stand-in on `PATH`.
+- **Collections** `awx.awx`, `ansible.windows`, `community.windows` install on project sync.
+
+The AAP node therefore needs outbound HTTPS to HashiCorp, GitHub, Galaxy and PyPI.
+
+### 5.6 Terraform state
+
+Job containers are thrown away after each job, so state is kept on the AAP host in
+`/var/lib/homelab-tfstate`, which AAP mounts into every job.
 
 | Stack | State file |
 | --- | --- |
-| `terraform/rhel-vms` | `/var/lib/homelab-tfstate/rhel-vms.tfstate` |
-| `terraform/vault-config` | `/var/lib/homelab-tfstate/vault-config.tfstate` |
+| `terraform/rhel-vms` | `rhel-vms.tfstate` |
+| `terraform/win-vms` | `win-vms.tfstate` |
+| `terraform/vault-config` | `vault-config.tfstate` |
 
-The folder is labelled `container_file_t` for SELinux and mounted without a
-relabel option (a `:z`/`:Z` relabel fails on every job, project syncs included).
-This works for VM-based and containerised AAP with a single execution node. For
-OpenShift-based AAP or several execution nodes, move state to an S3 backend
-(MinIO).
+The folder is labelled `container_file_t` for SELinux and mounted with no relabel
+option. This suits VM-based or containerised AAP with one execution node; with
+OpenShift or several execution nodes, use an S3 backend (for example MinIO).
 
-## 6. RHEL 10 template
+### 5.7 Repo layout
+
+```
+aap/seed.yml                   AAP config as code (types, project, inventory, templates, workflow)
+playbooks/10 ... 91_*.yml      one playbook per job template
+playbooks/tasks/terraform.yml  shared Terraform runner (init, plan, apply on change, outputs)
+roles/hashicorp_tools/         downloads Packer, Terraform, providers; mkisofs stand-in
+packer/rhel10/                 RHEL 10 template build and kickstart
+terraform/rhel-vms/            Vault + RHEL VM clones
+terraform/win-vms/             Windows VM clones with domain join
+terraform/vault-config/        Vault SSH CA, role, policy, AppRole
+vars/lab.yml                   shared non-secret settings
+docs/DESIGN.md                 this document
+```
+
+## 6. VM templates
+
+### RHEL 10 (`tmpl-rhel10`, built by job 10)
 
 | Setting | Value |
 | --- | --- |
-| Source | `[LocalDS] iso/rhel-10.1-x86_64-dvd.iso` |
-| VM | 2 vCPU, 4 GB RAM, 40 GB thin disk, EFI, PVSCSI, VMXNET3 |
-| Guest OS type | `rhel9_64Guest` (accepted by older ESXi builds) |
-| Install | Kickstart from a Packer-generated CD; boot command adds `inst.ks=cdrom:/ks.cfg` |
-| Packages | Minimal environment, open-vm-tools, perl, python3, tar |
-| Security | SELinux enforcing, firewalld with SSH only, root locked |
-| User | `labadmin`, wheel, passwordless sudo, password from `homelab-lab-secrets` |
-| Locale | en_AU, Australia/Sydney |
-| Generalisation | SSH host keys and machine-id cleared before conversion |
-| Known gap | Ships `redhat-release` without release key 4; job 30 fixes this on every clone |
+| Source ISO | `[LocalDS] iso/rhel-10.1-x86_64-dvd.iso` |
+| VM | 2 vCPU, 4 GB RAM, 40 GB thin, EFI, PVSCSI, VMXNET3 |
+| Install | Kickstart on a Packer-made CD; boot command adds `inst.ks=cdrom:/ks.cfg` |
+| Contents | Minimal install, open-vm-tools, python3; SELinux enforcing; firewalld with SSH only; root locked |
+| User | `labadmin`, passwordless sudo, password from `homelab-lab-secrets` |
+| Known gap | Ships an older `redhat-release` without Red Hat release key 4; job 30 fixes this on every clone |
 
-Clones are not guest-customised: this vCenter cannot customise RHEL 10 network
-settings, so job 30 sets hostnames instead.
+RHEL clones are not guest-customised (this vCenter cannot customise RHEL 10
+networking), so job 30 sets hostnames.
 
-## 7. Vault design
+### Windows Server 2022 (`Win2022-VM-Template`, existing)
+
+| Setting | Value |
+| --- | --- |
+| State | Sysprepped, VMware Tools installed, WinRM enabled |
+| Clones | `lab-win01`, `lab-win02`: 2 vCPU, 4 GB RAM |
+| Customisation | vSphere sets computer name, local Administrator password (= `labadmin` password), time zone (AUS Eastern), AD DNS, and joins `homelab.local` |
+| First connection | Job 61 over WinRM (NTLM) as the local Administrator, once, to install OpenSSH and trust the CA |
+| After that | SSH only, as `svc_aap` with a Vault-signed certificate |
+
+## 7. Vault
 
 | Item | Lab value |
 | --- | --- |
-| Deployment | Single node, integrated Raft storage, `/opt/vault/data` |
+| Deployment | Single node, integrated Raft storage |
 | TLS | Self-signed, 825 days; SANs: FQDN, short name, IP, 127.0.0.1 |
 | Seal | Shamir, 1 key share (lab only) |
 | Init material | `/root/vault-init.json` on lab-vault01, mode 0600 (lab only) |
-| Boot | `vault-lab-unseal.service` unseals from that file after a reboot (lab only) |
-| Audit | File device, `/var/log/vault/audit.log` |
-| SSH mount | `ssh-client-signer`, CA key generated inside Vault |
-| Signing role | `aap-linux`: user certs only, principal `svc_aap`, `permit-pty`, `rsa-sha2-256`, TTL and max TTL 2 h (`ssh_cert_ttl` in `vars/lab.yml`), key ID `aap-<token>-<keyhash>` |
-| Policy | `aap-ssh-sign`: `create`, `update` on `ssh-client-signer/sign/aap-linux` only |
-| AAP auth | AppRole `aap-controller`: token 10 min (max 20), secret_id 90 days, both bound to `192.168.1.0/24` |
+| After a reboot | `vault-lab-unseal.service` unseals from that file (lab only) |
+| Audit | `/var/log/vault/audit.log` |
+| SSH mount | `ssh-client-signer`; the CA private key never leaves Vault |
+| Signing role | `aap-linux` (used for RHEL and Windows): user certificates only, principal `svc_aap`, `permit-pty`, `rsa-sha2-256`, TTL = max TTL = 2 h, key ID `aap-<token>-<keyhash>` |
+| Policy | `aap-ssh-sign`: may only sign with role `aap-linux` |
+| AAP login | AppRole `aap-controller`: token 10 min (max 20), secret ID 90 days, both limited to `192.168.1.0/24` |
 
 `rsa-sha2-256` matters: RHEL 8 and later reject SHA-1 `ssh-rsa` certificate signatures.
 
+### Logging in to the Vault web UI
+
+1. Open `https://192.168.1.29:8200/ui` and accept the self-signed certificate warning.
+2. Method **Token**. Get the root token in a terminal (lab only):
+   `ssh labadmin@192.168.1.29 "sudo python3 -c \"import json;print(json.load(open('/root/vault-init.json'))['root_token'])\""`
+3. Look at **Secrets Engines › ssh-client-signer**, **Access › Auth Methods › approle**, **Policies › aap-ssh-sign**.
+
 ## 8. Security model
 
-- **Secrets:** only in AAP credentials (encrypted) and on the Vault VM. The repo's
-  `.gitignore` excludes state, keys, `.env` and plans.
-- **Least privilege:** AAP's Vault token can sign for one role and one principal; a
-  leaked AppRole secret_id is useless outside the bound subnet.
-- **Short-lived access:** certificates expire after 2 hours; removing the AppRole or
-  the role stops all new AAP access immediately.
-- **Traceability:** every signing is in the Vault audit log; the key ID appears in
-  each host's sshd log.
-- **Lab shortcuts (not for production):** stored unseal key and root token, one key
-  share, self-signed TLS, whole-subnet CIDR binding, `0777` state folder,
-  `NOPASSWD: ALL` sudo for `svc_aap`, TLS verification off towards AAP and vCenter.
+- **No standing access:** no stored password or static key opens a server for AAP; access exists only while a certificate is valid.
+- **Least privilege at Vault:** AAP's Vault token can sign for one role and one principal, and a leaked secret ID is useless outside the allowed subnet.
+- **Fast cut-off:** disable the AppRole or the role, and no new AAP access is possible; existing certificates die within 2 hours.
+- **Traceability:** Vault audit log for every signing; sshd (RHEL) and the OpenSSH/Operational event log (Windows) record the key ID and serial.
+- **Secrets outside git:** state, keys, plans and `.env` are in `.gitignore`.
 
-## 9. Just-in-time certificates
+Lab-only shortcuts, not for production: stored unseal key and root token, one key
+share, self-signed TLS, whole-subnet AppRole binding, `0777` state folder,
+`NOPASSWD: ALL` sudo and local Administrators membership for `svc_aap`,
+`LocalAccountTokenFilterPolicy=1` on Windows, TLS verification off towards AAP and vCenter.
 
-| Property | How it is achieved |
-| --- | --- |
-| Issued per job | The Machine credential's certificate field is a Vault lookup, run by AAP at every job launch |
-| Short-lived | Signing role TTL = max TTL = `ssh_cert_ttl` (7200 s); Vault refuses anything longer |
-| Not kept after the job | AAP writes the key and certificate only into the job's temporary private data directory and ssh-agent, which are destroyed when the job ends |
-| One principal | The certificate is valid only for `svc_aap` |
-| Traceable | Vault audit log records each signing; each host's sshd log records the certificate's key ID and serial |
-
-Job template **homelab 90 - connectivity check (signed cert)** (`playbooks/90_connectivity_check.yml`)
-is the quick test: ping, hostname, login user, OS, uptime and the accepted certificate ID per target.
-
-Job template **homelab 80 - run job with JIT certificate** (`playbooks/80_jit_certificate_demo.yml`)
-uses only `rhel-svc-aap-signed`. It prints the certificate issued for that run
-(key ID, serial, principal, validity window) and the matching sshd login record
-on each target.
-
-SSH certificates cannot be revoked one by one without a revocation list (KRL),
-so the short TTL is the control. Jobs that run longer than the TTL keep their
-existing connections but cannot open new ones; raise `ssh_cert_ttl` for those.
-
-## 10. Operations
+## 9. Operations
 
 | Task | How |
 | --- | --- |
-| Run everything | AAP › Templates › `homelab - Vault SSH lab (end to end)` › Launch |
-| Change code | Commit and push to `main`; the project syncs on launch |
-| Rebuild the template | Launch job 10 with `rebuild_template: true` |
-| Rotate the AppRole secret_id and AAP key | Rerun job 50 (does both) |
-| Add a target host | Add it to `vms` in `terraform/rhel-vms/terraform.tfvars` and to `lab_vm_groups` in `vars/lab.yml`, push, run the workflow |
-| Vault sealed after a reboot | The boot service should unseal it; otherwise rerun job 40 |
+| Run everything | Launch the workflow (section 5.1) |
+| Quick health check | Launch job 90 (RHEL) or 91 (Windows) |
+| Change code | Push to `main`; the project syncs on every launch |
+| Change certificate lifetime | Edit `ssh_cert_ttl` in `vars/lab.yml`, push, rerun job 50 |
+| Rotate the AppRole secret ID and AAP key | Rerun job 50 |
+| Rebuild the RHEL template | Launch job 10 with `rebuild_template: true` |
+| Add a RHEL target | Add it to `terraform/rhel-vms/terraform.tfvars` and `lab_vm_groups`, push, run the workflow |
+| Add a Windows target | Add it to `terraform/win-vms/terraform.tfvars` and `lab_win_groups`, push, run the workflow |
+| Vault sealed after a reboot | The boot service unseals it; otherwise rerun job 40 |
 | Reseed AAP objects | `ansible-playbook aap/seed.yml` (safe to rerun) |
-| Rotate the CA | `TrustedUserCAKeys` accepts several keys: add the new CA key on hosts, switch the mount, then remove the old key |
-| vCenter certificate | Machine SSL certificate reissued 2026-11-12, valid 2 years: renew before November 2028 |
+| Rotate the CA | Add the new CA key to `TrustedUserCAKeys` on all servers, switch the mount, then remove the old key |
+| vCenter certificate | Reissued 2026-11-12, valid 2 years: renew before November 2028 |
 
-## 11. Production differences
+## 10. Bringing it up from scratch
+
+1. Push the repo to GitHub.
+2. In AAP create `homelab-github`, `homelab-vcenter`, `homelab-labadmin`, `homelab-aap-api`.
+3. On the AAP host create `/var/lib/homelab-tfstate` (owned by `aap`, labelled `container_file_t`).
+4. Run `ansible-playbook aap/seed.yml` from a machine with the AAP token. It creates the credential types and stops.
+5. Create `homelab-lab-secrets` and `homelab-domain-join`, then rerun the seed. It creates the project, job templates and workflow.
+6. Launch the workflow.
+7. Run the seed once more to create test templates 80, 90 and 91 (their credentials now exist).
+
+## 11. Decisions
+
+| Decision | Choice | Why |
+| --- | --- | --- |
+| Where automation runs | AAP for everything; the Mac only seeds once | Matches the work fleet; full audit trail in AAP |
+| Windows access method | OpenSSH Server trusting the same Vault CA | One CA, one role, one pattern for both OS families; no passwords for AAP to hold |
+| Windows VMs | Clone the existing sysprepped template, join the domain | Quicker than a Packer Windows build; the template already has Tools and WinRM |
+| Credential per OS | Two Machine credentials with the same key | Clear job templates; one certificate pipeline |
+| AAP API from jobs | `https://host.containers.internal` | Rootless Podman: the host's own IP loops back into the container |
+| Collection for AAP config | `awx.awx` with `/api/controller/` prefix | On Galaxy, no Automation Hub token; prefix needed behind the AAP 2.5+ gateway |
+| Tools in jobs | Download per job | No custom execution environment or registry needed for a lab |
+| RHEL naming | Ansible after clone | vCenter cannot customise RHEL 10 |
+
+## 12. Lab vs production
 
 | Lab | Production |
 | --- | --- |
 | 1 Vault node | 3+ nodes, Raft, one per failure domain, load balancer |
-| Shamir 1 share, key on disk | Auto-unseal with a cloud KMS or HSM; recovery keys split between people |
+| Shamir, 1 share, key on disk | Auto-unseal with a cloud KMS or HSM; recovery keys split between people |
 | Self-signed TLS | Certificate from the internal CA |
-| Root token used by job 50 | Admin token from an auth method, root token revoked |
-| AppRole bound to /24 | Bound to the AAP execution node addresses |
-| One environment | Separate mount or cluster per environment |
-| State on the AAP host | Remote backend with locking (S3 + DynamoDB, Terraform Cloud) |
-| Packer/Terraform downloaded per job | Custom execution environment with pinned tools |
-
-## 12. Decisions
-
-| Decision | Choice | Reason |
-| --- | --- | --- |
-| Where automation runs | AAP for everything; Mac only seeds once | Matches how the work fleet is run; audit trail in AAP |
-| Collection for AAP config | `awx.awx` with `/api/controller/` prefix | On Galaxy, no Automation Hub token; prefix needed for the AAP 2.5+ gateway |
-| AAP API auth | Token | AAP gateway rejects password login on the controller API |
-| Tools in jobs | Download at run time | No custom EE or registry needed for a lab |
-| VM naming | Ansible after clone | vCenter guest customisation fails for RHEL 10 |
-| Inventory | Static hosts updated by job 20 | No DNS for lab VMs; avoids the vCenter inventory plugin's DNS dependency |
-| Kickstart delivery | CD + explicit `inst.ks=` | OEMDRV auto-detection did not fire |
+| Root token used by job 50 | Admin login via an auth method; root token revoked |
+| AppRole limited to a /24 | Limited to the AAP execution node addresses |
+| One role for RHEL and Windows | Separate roles (and principals) per OS and environment |
+| svc_aap with full sudo / local admin | Sudo and admin rights limited to what automation needs |
+| State on the AAP host | Remote backend with locking |
+| Tools downloaded per job | Custom execution environment with pinned tools |
 
 ## 13. Problems found and fixed
 
 | Problem | Cause | Fix |
 | --- | --- | --- |
-| vCenter UI: "no healthy upstream" | Machine SSL certificate expired 2026-08-05, so `vpxd-svcs` and `vpxd` could not start | `certificate-manager` option 3; SSO admin password reset with `vdcadmintool` |
-| Packer build stopped at the graphical installer | Kickstart CD (OEMDRV) not auto-detected | Boot command edits the entry and adds `inst.ks=cdrom:/ks.cfg` |
-| Packer version error | Mac had Packer 1.8.6 | Version constraint lowered to `>= 1.8.0`; AAP now downloads 1.11.2 |
-| Terraform clone failed at customisation | vCenter cannot customise RHEL 10 networking | Customisation removed; hostnames set by job 30 |
-| Vault install: "nothing provides openssl" | Clones not registered with Red Hat, so no BaseOS/AppStream | Job 30 registers each VM |
-| `ansible.posix` / `awx.awx` not found on the Mac | Mac Python had no CA bundle, Galaxy TLS failed | `SSL_CERT_FILE` built from the macOS keychain |
-| AAP API 404, then 401 | `awx.awx` default `/api/` path; password login disabled | `CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX=/api/controller/`; API token |
-| AAP rejected `:Z` mount option | Only `z`, `O`, `ro`, `rw` allowed | Changed, then removed (below) |
-| Every AAP job failed: `lsetxattr ... operation not permitted` | Relabel of a root-owned folder on each job | Plain mount; folder owned by `aap` and labelled `container_file_t` |
-| Seed: "Playbook not found for project" | Project never synced successfully; seed did not resync | Seed now always syncs the project first |
-| Job 20: `terraform init` timed out on registry.terraform.io | Registry unreachable from the job container | Providers fetched from releases.hashicorp.com into a filesystem mirror |
-| Job 20: AAP API timed out from the job (`aap.lab.local`) | Rootless Podman 5.6 gives containers the host's IP, so the host IP loops back; AAP host `/etc/hosts` also maps the name to 127.0.0.1 and a stale .33 | `homelab-aap-api` host set to `https://host.containers.internal` |
-| Job 40: "Public key for openssl ... is not installed" | RHEL 10.1 ISO ships an older `redhat-release` without Red Hat release key 4 (ML-DSA-87+Ed448), which signs current updates (RHEL-144980) | Job 30 upgrades to `redhat-release-10.1-18` (old-key signed, ships key 4), falls back to `--nogpgcheck` for that one package, then imports the key file |
-| Job 10: "could not find a supported CD ISO creation command" | No xorriso/mkisofs in the AAP execution environment | Template existence checked first via the vCenter API; pycdlib-based `mkisofs` stand-in for rebuilds |
+| vCenter UI: "no healthy upstream" | Machine SSL certificate expired 2026-08-05; `vpxd-svcs` and `vpxd` could not start | `certificate-manager` option 3; SSO admin password reset with `vdcadmintool` |
+| Packer stopped at the graphical installer | Kickstart CD (OEMDRV) not auto-detected | Boot command adds `inst.ks=cdrom:/ks.cfg` |
+| Packer version error on the Mac | Packer 1.8.6 | Constraint `>= 1.8.0`; AAP now downloads 1.11.2 |
+| RHEL clone failed at customisation | vCenter cannot customise RHEL 10 | No customisation; job 30 sets hostnames |
+| Vault install: "nothing provides openssl" | Clones not registered with Red Hat | Job 30 registers each VM |
+| Galaxy TLS error on the Mac | Mac Python had no CA bundle | `SSL_CERT_FILE` built from the macOS keychain |
+| AAP API 404, then 401 | `awx.awx` default path; password login disabled | `/api/controller/` prefix; API token |
+| AAP rejected `:Z` | Only `z`, `O`, `ro`, `rw` allowed | Changed, then removed (next row) |
+| Every AAP job failed: `lsetxattr ... not permitted` | Relabel of a root-owned folder on each job | Plain mount; folder owned by `aap`, labelled `container_file_t` |
+| Seed: "Playbook not found for project" | Project had never synced | Seed always syncs the project first |
+| Job 10: "could not find a supported CD ISO creation command" | No `xorriso`/`mkisofs` in the image | vCenter check first; `pycdlib` `mkisofs` stand-in for builds |
+| Job 20: `terraform init` timed out | `registry.terraform.io` unreachable from jobs | Providers from `releases.hashicorp.com` into a local mirror |
+| Job 20: AAP API timed out | Rootless Podman 5.6: host IP loops back; AAP host `/etc/hosts` maps the name to 127.0.0.1 and a stale .33 | `homelab-aap-api` host `https://host.containers.internal` |
+| Job 40: "Public key for openssl ... is not installed" | RHEL 10.1 ISO lacks Red Hat release key 4 (ML-DSA-87+Ed448), which signs current updates (RHEL-144980) | Job 30 upgrades to `redhat-release-10.1-18` (old-key signed, carries key 4), falls back to `--nogpgcheck` for that package only, imports the key file |
+| Job 60: permission denied on `vault.crt` | `/opt/vault/tls` readable only by `vault` | That play uses `become` |
 
 ## 14. Open items
 
-- [ ] First end-to-end workflow run.
-- [ ] Real Red Hat password in `homelab-lab-secrets` (job 30 needs it).
-- [ ] Rotate secrets that were shared in chat: vCenter admin password, AAP API
-      token, the `claude` AAP user password.
-- [ ] DHCP reservations for the three lab VMs.
+- [ ] First run of the Windows jobs (21, 61, 70, 91).
+- [ ] Rotate secrets that were shared in chat: vCenter admin password, AAP API token, the `claude` AAP user password.
+- [ ] DHCP reservations for the lab VMs.
 - [ ] Rebuild `tmpl-rhel10` so its `labadmin` password matches the reset one.
-- [ ] Optional: add `lab-*` A records to AD DNS.
-- [ ] Clean up `/etc/hosts` on the AAP VM (`aap.lab.local` on 127.0.0.1 and stale 192.168.1.33; real IP 192.168.1.58).
+- [ ] Clean up `/etc/hosts` on the AAP VM (`aap.lab.local` on 127.0.0.1 and a stale 192.168.1.33).
+- [ ] Optional: rename inventory `homelab-rhel-lab` to `homelab-lab` now that it holds Windows too.

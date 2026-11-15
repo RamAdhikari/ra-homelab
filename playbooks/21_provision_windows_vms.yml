@@ -1,0 +1,68 @@
+# Clones two Windows Server 2022 VMs from Win2022-VM-Template with Terraform,
+# joins them to homelab.local, then writes them into the AAP inventory
+# (group win_targets, WinRM bootstrap connection vars).
+# Credentials: homelab-vcenter, homelab-lab-secrets, homelab-domain-join, homelab-aap-api
+- name: Provision Windows VMs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  environment:
+    CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX: /api/controller/
+  pre_tasks:
+    - name: Required credentials are attached
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'VMWARE_PASSWORD') | length > 0
+          - lookup('env', 'PKR_VAR_build_password') | length > 0
+          - lookup('env', 'DOMAIN_JOIN_USER') | length > 0
+          - lookup('env', 'DOMAIN_JOIN_PASSWORD') | length > 0
+          - lookup('env', 'CONTROLLER_HOST') | length > 0
+        fail_msg: Attach homelab-vcenter, homelab-lab-secrets, homelab-domain-join and homelab-aap-api to this job template.
+  roles:
+    - hashicorp_tools
+  tasks:
+    - name: Terraform win-vms
+      ansible.builtin.include_tasks: tasks/terraform.yml
+      vars:
+        tf_dir: "{{ playbook_dir }}/../terraform/win-vms"
+        tf_state: "{{ tfstate_dir }}/win-vms.tfstate"
+        tf_vars:
+          - "vsphere_server={{ lookup('env', 'VMWARE_HOST') }}"
+          - "vsphere_user={{ lookup('env', 'VMWARE_USER') }}"
+        tf_env:
+          TF_VAR_vsphere_password: "{{ lookup('env', 'VMWARE_PASSWORD') }}"
+          TF_VAR_win_admin_password: "{{ lookup('env', 'PKR_VAR_build_password') }}"
+          TF_VAR_domain_join_user: "{{ lookup('env', 'DOMAIN_JOIN_USER') }}"
+          TF_VAR_domain_join_password: "{{ lookup('env', 'DOMAIN_JOIN_PASSWORD') }}"
+
+    - name: VM addresses
+      ansible.builtin.set_fact:
+        vm_ips: "{{ tf_outputs.vm_ips.value }}"
+
+    - name: Every VM has an IPv4 address
+      ansible.builtin.assert:
+        that: item.value is match('^\d+\.\d+\.\d+\.\d+$')
+        fail_msg: "{{ item.key }} has no IPv4 address yet ({{ item.value }}). Check VMware Tools and DHCP."
+        quiet: true
+      loop: "{{ vm_ips | dict2items }}"
+
+    - name: Hosts in the AAP inventory
+      awx.awx.host:
+        name: "{{ item.key }}.{{ lab_domain }}"
+        inventory: "{{ lab_inventory }}"
+        variables:
+          ansible_host: "{{ item.value }}"
+        state: present
+      loop: "{{ vm_ips | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} = {{ item.value }}"
+
+    - name: Group win_targets with the WinRM bootstrap connection
+      awx.awx.group:
+        name: win_targets
+        inventory: "{{ lab_inventory }}"
+        hosts: "{{ lab_win_groups | dict2items | selectattr('value', 'equalto', 'win_targets') | map(attribute='key') | map('regex_replace', '$', '.' ~ lab_domain) | list }}"
+        variables: "{{ win_bootstrap_vars }}"
+        state: present

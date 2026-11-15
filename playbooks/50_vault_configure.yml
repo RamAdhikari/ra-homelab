@@ -1,5 +1,6 @@
 # Configures the Vault SSH CA and AppRole with Terraform, then creates the AAP
 # credentials that fetch a signed certificate at job launch.
+# Also publishes vault_ssh_ca_public_key as an inventory variable for job 61.
 # Credentials: homelab-labadmin, homelab-aap-api
 - name: Collect Vault root token and CA certificate
   hosts: vault
@@ -82,19 +83,22 @@
           default_auth_path: approle
       no_log: true
 
-    - name: Machine credential for svc_aap
+    # Two Machine credentials with the same svc_aap key, one per OS family, so
+    # job templates read clearly. Both get their certificate from Vault at launch.
+    - name: Machine credentials for svc_aap (RHEL and Windows)
       awx.awx.credential:
-        name: "{{ machine_credential }}"
+        name: "{{ item }}"
         organization: "{{ controller_org }}"
         credential_type: Machine
         inputs:
           username: "{{ aap_ssh_user }}"
           ssh_key_data: "{{ lookup('file', hc_tools_dir ~ '/aap_key') }}"
+      loop: ["{{ machine_credential }}", "{{ win_machine_credential }}"]
       no_log: true
 
     - name: Certificate field filled from Vault at launch
       awx.awx.credential_input_source:
-        target_credential: "{{ machine_credential }}"
+        target_credential: "{{ item }}"
         input_field_name: ssh_public_key_data
         source_credential: "{{ signer_credential }}"
         metadata:
@@ -102,6 +106,16 @@
           secret_path: "{{ vault_ssh_mount }}"
           role: "{{ vault_ssh_role }}"
           valid_principals: "{{ aap_ssh_user }}"
+      loop: ["{{ machine_credential }}", "{{ win_machine_credential }}"]
+
+    - name: Publish the CA public key and Vault address as inventory variables
+      awx.awx.inventory:
+        name: "{{ lab_inventory }}"
+        organization: "{{ controller_org }}"
+        variables:
+          vault_addr: "{{ vault_addr }}"
+          vault_ssh_ca_public_key: "{{ tf_outputs.ssh_ca_public_key.value | trim }}"
+        state: present
 
     - name: Remove the private key from the job container
       ansible.builtin.file:

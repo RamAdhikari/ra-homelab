@@ -6,12 +6,32 @@ controller_org: Default
 lab_inventory: homelab-rhel-lab
 signer_credential: vault-ssh-signer
 machine_credential: rhel-svc-aap-signed
+win_machine_credential: win-svc-aap-signed
 
 # Terraform VM name => inventory group
 lab_vm_groups:
   lab-vault01: vault
   lab-rhel01: rhel_targets
   lab-rhel02: rhel_targets
+
+# Windows VMs (terraform/win-vms) => inventory group
+lab_win_groups:
+  lab-win01: win_targets
+  lab-win02: win_targets
+
+# Bootstrap connection for win_targets (WinRM as the local Administrator).
+# Jobs that use the Vault-signed certificate override these with SSH.
+win_bootstrap_vars:
+  ansible_connection: winrm
+  ansible_port: 5985
+  ansible_winrm_transport: ntlm
+  ansible_winrm_server_cert_validation: ignore
+
+# Play vars that switch win_targets to OpenSSH + PowerShell for signed-cert jobs
+win_ssh_vars:
+  ansible_connection: ssh
+  ansible_shell_type: powershell
+  ansible_port: 22
 
 # Terraform state survives between jobs only on a host path exposed to job
 # containers (aap/seed.yml adds it to "Paths to expose to isolated jobs").

@@ -1,99 +1,87 @@
 # ra-homelab
 
-Home lab automation, run entirely from AAP: RHEL 10 template (Packer), lab VMs
-(Terraform), Vault as an SSH CA, and AAP logging in to RHEL with Vault-signed
-SSH certificates.
+AAP logs in to RHEL and Windows servers with **just-in-time SSH certificates**
+signed by HashiCorp Vault: a new certificate per job, valid 2 hours, only for the
+service account `svc_aap`. No stored passwords or static keys.
 
-Full design, decisions and troubleshooting history: [docs/DESIGN.md](docs/DESIGN.md).
+Everything, from VM templates to the final login test, is code in this repo and
+runs from one AAP workflow.
 
-Lab: VMware Fusion > nested ESXi > vCenter `vcsa.homelab.local`; VMs on ESXi
-`192.168.1.155`; AAP at `https://aap.lab.local`.
+**Full design, flows and troubleshooting history: [docs/DESIGN.md](docs/DESIGN.md).**
 
-## How it runs
+## Run it
 
-One AAP workflow, **homelab - Vault SSH lab (end to end)**, chains seven job
-templates. Every step is idempotent, so the workflow can be rerun at any time.
+AAP › Templates › **homelab - Vault SSH lab (end to end)** › Launch.
 
-| # | Job template | Playbook | What it does | Credentials |
-| --- | --- | --- | --- | --- |
-| 10 | build RHEL 10 template | `playbooks/10_build_template.yml` | Packer builds `tmpl-rhel10`; skips if it exists (`rebuild_template=true` to replace) | vcenter, lab-secrets |
-| 20 | provision VMs | `playbooks/20_provision_vms.yml` | Terraform clones `lab-vault01`, `lab-rhel01`, `lab-rhel02`; writes their IPs into the AAP inventory | vcenter, aap-api |
-| 30 | bootstrap hosts | `playbooks/30_bootstrap_hosts.yml` | Hostnames, `/etc/hosts`, Red Hat registration | labadmin, lab-secrets |
-| 40 | install Vault | `playbooks/40_vault_install.yml` | Vault on `lab-vault01`: TLS, init, unseal, audit | labadmin |
-| 50 | configure Vault SSH CA | `playbooks/50_vault_configure.yml` | Terraform SSH CA + AppRole; creates AAP credentials `vault-ssh-signer` and `rhel-svc-aap-signed` | labadmin, aap-api |
-| 60 | trust SSH CA on targets | `playbooks/60_ssh_ca_trust.yml` | Targets trust the CA; creates `svc_aap` | labadmin |
-| 70 | verify signed SSH | `playbooks/70_verify.yml` | AAP ad hoc `id -un` as `svc_aap` using only the signed certificate | aap-api |
+| # | Job template | What it does |
+| --- | --- | --- |
+| 10 | build RHEL 10 template | Packer builds `tmpl-rhel10` (skips if it exists) |
+| 20 | provision VMs | Terraform clones `lab-vault01`, `lab-rhel01`, `lab-rhel02` |
+| 21 | provision Windows VMs | Terraform clones `lab-win01`, `lab-win02` from `Win2022-VM-Template`, joins `homelab.local` |
+| 30 | bootstrap hosts | RHEL hostnames, Red Hat registration and signing key |
+| 40 | install Vault | Vault on `lab-vault01`: TLS, init, unseal, audit |
+| 50 | configure Vault SSH CA | SSH CA + AppRole; creates AAP credentials `rhel-svc-aap-signed`, `win-svc-aap-signed` |
+| 60 | trust SSH CA on targets | RHEL: `svc_aap` + trust the Vault CA |
+| 61 | Windows OpenSSH + trust SSH CA | Windows: OpenSSH Server, `svc_aap`, trust the Vault CA |
+| 70 | verify signed SSH | Logs in to RHEL and Windows with certificates only |
 
-Packer and Terraform are downloaded (pinned, SHA256-verified) into the job
-container by `roles/hashicorp_tools`, so the default execution environment
-works without a custom image.
+Quick tests: **homelab 90** (RHEL) and **homelab 91** (Windows) show hostname, user,
+uptime and the certificate serial for each server. **homelab 80** shows the full
+certificate issued for a run.
 
 ## One-time setup
 
-1. **Push to GitHub.** Create an empty private repo `RamAdhikari/ra-homelab`, then:
-   ```bash
-   cd ~/ra-homelab
-   git remote add origin https://github.com/RamAdhikari/ra-homelab.git
-   git push -u origin main
-   ```
-
-2. **Credentials in AAP** (organisation `Default`; enter the secrets in the UI):
+1. **Push to GitHub** (`RamAdhikari/ra-homelab`, private).
+2. **Create credentials in AAP** (organisation `Default`):
 
    | Name | Type | Values |
    | --- | --- | --- |
-   | `homelab-github` | Source Control | GitHub username + fine-grained PAT (Contents: read) |
+   | `homelab-github` | Source Control | GitHub username + PAT (Contents: read) |
    | `homelab-vcenter` | VMware vCenter | `vcsa.homelab.local`, `Administrator@HOMELAB.LOCAL`, password |
-   | `homelab-labadmin` | Machine | `labadmin` + the template build password |
-   | `homelab-aap-api` | Red Hat Ansible Automation Platform | `https://host.containers.internal`, a token, verify SSL off (jobs run in rootless Podman on the AAP host; the host's own IP loops back into the container) |
-   | `homelab-lab-secrets` | Homelab lab secrets (created by step 4) | build password, Red Hat login and password |
+   | `homelab-labadmin` | Machine | `labadmin` + its password |
+   | `homelab-aap-api` | Red Hat Ansible Automation Platform | `https://host.containers.internal`, API token, verify SSL off |
+   | `homelab-lab-secrets` | Homelab lab secrets *(created by the seed)* | `labadmin` password (also the Windows local Administrator password), Red Hat login + password |
+   | `homelab-domain-join` | Homelab domain join *(created by the seed)* | AD account allowed to join computers, + password |
 
-   `homelab-lab-secrets` can only be created after the first seed run creates its type.
+   `homelab-aap-api` uses `host.containers.internal` because jobs run in rootless
+   Podman on the AAP host, where the host's own IP is not reachable. You keep
+   using `https://aap.lab.local` in the browser and from the Mac.
 
-3. **Terraform state directory on the AAP execution node:**
+3. **Terraform state folder on the AAP host:**
    ```bash
    ssh -t aap@aap.lab.local 'sudo install -d -m 0777 -o aap -g aap /var/lib/homelab-tfstate &&
      sudo semanage fcontext -a -t container_file_t "/var/lib/homelab-tfstate(/.*)?" &&
      sudo restorecon -Rv /var/lib/homelab-tfstate'
    ```
-   The SELinux label lets job containers use the folder without relabelling it.
-   Then copy the state of the VMs that already exist, so AAP manages them instead of cloning duplicates:
-   ```bash
-   scp ~/ra-homelab/terraform/rhel-vms/terraform.tfstate aap@aap.lab.local:/var/lib/homelab-tfstate/rhel-vms.tfstate
-   ```
-   `0777` is a lab shortcut that avoids UID mapping issues with rootless job containers.
 
-4. **Seed AAP** (from the Mac, once; reruns are safe):
+4. **Seed AAP** (from the Mac; safe to rerun):
    ```bash
    cd ~/ra-homelab
    export CONTROLLER_HOST=https://aap.lab.local CONTROLLER_VERIFY_SSL=false
    read -s "CONTROLLER_OAUTH_TOKEN?AAP token: "; export CONTROLLER_OAUTH_TOKEN; echo
    ansible-playbook aap/seed.yml
    ```
-   The first run creates the credential type, the inventory and the state-path
-   setting, then stops listing any missing credentials. Create them and rerun;
-   the second run creates the project, job templates and workflow.
-
-## Run
-
-AAP > Templates > **homelab - Vault SSH lab (end to end)** > Launch.
-
-## Lab-only shortcuts
-
-- Vault runs as one node with a self-signed certificate and one unseal key.
-- The unseal key and root token are stored in `/root/vault-init.json` on the
-  Vault VM, and `vault-lab-unseal.service` unseals at boot. Not for production.
-- AppRole is bound to `192.168.1.0/24` (`vars/lab.yml`); tighten to the AAP node.
-- The VMs use DHCP; job 20 rewrites the inventory IPs on every run.
+   The first run creates the two custom credential types and stops, listing the
+   credentials to create. Create them and rerun. After the workflow has run once,
+   run the seed again to add test templates 80, 90 and 91.
 
 ## Layout
 
 ```
-aap/seed.yml                   AAP config as code (credential type, project, templates, workflow)
-playbooks/                     the seven job playbooks + tasks/terraform.yml + templates/
-roles/hashicorp_tools/         downloads Packer and Terraform into the job container
-packer/rhel10/                 vsphere-iso build + kickstart
-terraform/rhel-vms/            VM clones (state: /var/lib/homelab-tfstate/rhel-vms.tfstate)
-terraform/vault-config/        Vault SSH CA + AppRole (state: .../vault-config.tfstate)
+aap/seed.yml                   AAP config as code
+playbooks/                     one playbook per job template
+roles/hashicorp_tools/         Packer, Terraform and providers for the job container
+packer/rhel10/                 RHEL 10 template
+terraform/rhel-vms/            Vault + RHEL VMs
+terraform/win-vms/             Windows VMs (domain-joined)
+terraform/vault-config/        Vault SSH CA, role, policy, AppRole
 vars/lab.yml                   shared non-secret settings
-collections/requirements.yml   installed by AAP on project sync
+docs/DESIGN.md                 design document
 ```
+
+## Lab-only shortcuts
+
+Single Vault node with a self-signed certificate; unseal key and root token stored
+on the Vault VM so it unseals itself after reboots; AppRole limited to the whole
+`192.168.1.0/24`; `svc_aap` has full sudo / local Administrator rights. See
+DESIGN.md section 12 for the production equivalents.
