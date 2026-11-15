@@ -1,4 +1,4 @@
-# Clones two Windows Server 2022 VMs from Win2022-VM-Template with Terraform,
+# Clones two Windows Server 2022 VMs from tmpl-win2022 (job 11) with Terraform,
 # joins them to homelab.local, then writes them into the AAP inventory
 # (group win_targets, WinRM bootstrap connection vars).
 # Credentials: homelab-vcenter, homelab-lab-secrets, homelab-domain-join, homelab-aap-api

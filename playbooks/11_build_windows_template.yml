@@ -1,0 +1,50 @@
+# Builds the Windows Server 2022 template (tmpl-win2022) with Packer.
+# Skips when it already exists ("already exists" from Packer counts as success);
+# launch with rebuild_template=true to replace it. Takes 30-60 minutes nested.
+# Credentials: homelab-vcenter, homelab-lab-secrets
+- name: Build Windows Server 2022 template
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+  vars:
+    rebuild_template: false
+    packer_dir: "{{ playbook_dir }}/../packer/win2022"
+  pre_tasks:
+    - name: Required credentials are attached
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'VMWARE_HOST') | length > 0
+          - lookup('env', 'VMWARE_PASSWORD') | length > 0
+          - lookup('env', 'PKR_VAR_build_password') | length > 0
+        fail_msg: Attach the homelab-vcenter and homelab-lab-secrets credentials to this job template.
+  roles:
+    - hashicorp_tools
+  tasks:
+    - name: packer init
+      ansible.builtin.command:
+        argv: ["{{ packer_bin }}", init, .]
+        chdir: "{{ packer_dir }}"
+      environment: "{{ hc_env }}"
+      changed_when: false
+
+    - name: packer build
+      ansible.builtin.command:
+        argv: >-
+          {{ [packer_bin, 'build', '-color=false',
+              '-var=vsphere_server=' ~ lookup('env', 'VMWARE_HOST'),
+              '-var=vsphere_user=' ~ lookup('env', 'VMWARE_USER')]
+             + (['-force'] if rebuild_template | bool else [])
+             + ['.'] }}
+        chdir: "{{ packer_dir }}"
+      environment: "{{ hc_env | combine({'PKR_VAR_vsphere_password': lookup('env', 'VMWARE_PASSWORD')}) }}"
+      register: packer_build
+      failed_when:
+        - packer_build.rc != 0
+        - "'already exists' not in (packer_build.stdout ~ packer_build.stderr)"
+      changed_when: packer_build.rc == 0
+
+    - name: Result
+      ansible.builtin.debug:
+        msg: "{{ 'tmpl-win2022 built.' if packer_build.rc == 0 else 'tmpl-win2022 already exists, nothing to do (rebuild_template=true replaces it).' }}"

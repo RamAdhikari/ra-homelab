@@ -53,7 +53,7 @@ flowchart LR
       V["lab-vault01 .29<br/>Vault"]
       R["lab-rhel01 .27<br/>lab-rhel02 .28"]
       W["lab-win01<br/>lab-win02"]
-      T["Templates<br/>tmpl-rhel10<br/>Win2022-VM-Template"]
+      T["Templates<br/>tmpl-rhel10<br/>tmpl-win2022"]
     end
   end
   AAP["AAP<br/>aap.lab.local (.58)"]
@@ -185,7 +185,7 @@ has it in `authorized_keys`.
 
 ```mermaid
 flowchart LR
-  T10["10 RHEL template<br/>Packer"] --> T20["20 RHEL VMs<br/>Terraform"] --> T21["21 Windows VMs<br/>Terraform + domain join"] --> T30["30 RHEL bootstrap<br/>hostname, Red Hat"]
+  T10["10 RHEL template<br/>Packer"] --> T11["11 Windows template<br/>Packer"] --> T20["20 RHEL VMs<br/>Terraform"] --> T21["21 Windows VMs<br/>Terraform + domain join"] --> T30["30 RHEL bootstrap<br/>hostname, Red Hat"]
   T30 --> T40["40 Vault<br/>install, init"] --> T50["50 Vault SSH CA<br/>+ AAP credentials"] --> T60["60 RHEL trust CA"] --> T61["61 Windows OpenSSH<br/>+ trust CA"] --> T70["70 Verify<br/>RHEL + Windows"]
 ```
 
@@ -195,8 +195,9 @@ only if the previous one succeeded, and every step is safe to rerun.
 | # | Job template | Runs on | What it does | Rerun behaviour |
 | --- | --- | --- | --- | --- |
 | 10 | build RHEL 10 template | job container | Packer builds `tmpl-rhel10` | Skips if it exists; `rebuild_template=true` replaces it |
+| 11 | build Windows 2022 template | job container | Packer builds `tmpl-win2022` from the evaluation ISO (answer file on a floppy) | Skips if it exists; `rebuild_template=true` replaces it |
 | 20 | provision VMs | job container | Terraform clones Vault + 2 RHEL VMs; writes IPs to the inventory | Plans first, applies only changes |
-| 21 | provision Windows VMs | job container | Terraform clones 2 Windows VMs from `Win2022-VM-Template`, sets the local Administrator password, joins `homelab.local`; writes IPs and WinRM settings to the inventory | Plans first, applies only changes |
+| 21 | provision Windows VMs | job container | Terraform clones 2 Windows VMs from `tmpl-win2022`, sets the local Administrator password, joins `homelab.local`; writes IPs and WinRM settings to the inventory | Plans first, applies only changes |
 | 30 | bootstrap hosts | Vault + RHEL VMs | Hostname, `/etc/hosts`, Red Hat registration, Red Hat release key 4 | Registers only if not registered |
 | 40 | install Vault | lab-vault01 | Signing keys, Vault, TLS, config, firewall, init, unseal, boot-time unseal, audit log | Init only once; unseal only if sealed |
 | 50 | configure Vault SSH CA | Vault + job container | Terraform: CA, role, policy, AppRole. New secret ID and key; creates/updates both Machine credentials; publishes the CA public key as an inventory variable | Rotates the secret ID and key each run |
@@ -229,8 +230,8 @@ Run any of them twice: the serial changes, because each run gets a new certifica
 | Credential | Type | Holds | Used by | Who creates it |
 | --- | --- | --- | --- | --- |
 | `homelab-github` | Source Control | GitHub PAT | Project | You |
-| `homelab-vcenter` | VMware vCenter | vCenter user and password | 10, 20, 21 | You |
-| `homelab-lab-secrets` | Homelab lab secrets | `labadmin` password (also the Windows local Administrator password), Red Hat login | 10, 21, 30, 61 | You |
+| `homelab-vcenter` | VMware vCenter | vCenter user and password | 10, 11, 20, 21 | You |
+| `homelab-lab-secrets` | Homelab lab secrets | `labadmin` password (also the Windows local Administrator password), Red Hat login | 10, 11, 21, 30, 61 | You |
 | `homelab-domain-join` | Homelab domain join | AD account that joins Windows VMs | 21 | You |
 | `homelab-labadmin` | Machine | `labadmin` + password (RHEL bootstrap) | 30, 40, 50, 60 | You |
 | `homelab-aap-api` | Red Hat AAP | Host `https://host.containers.internal`, API token | 20, 21, 50, 70 | You |
@@ -268,10 +269,11 @@ OpenShift or several execution nodes, use an S3 backend (for example MinIO).
 
 ```
 aap/seed.yml                   AAP config as code (types, project, inventory, templates, workflow)
-playbooks/10 ... 91_*.yml      one playbook per job template
+playbooks/10 ... 91_*.yml      one playbook per job template (11 = Windows template)
 playbooks/tasks/terraform.yml  shared Terraform runner (init, plan, apply on change, outputs)
 roles/hashicorp_tools/         downloads Packer, Terraform, providers; mkisofs stand-in
 packer/rhel10/                 RHEL 10 template build and kickstart
+packer/win2022/                Windows Server 2022 template build and answer file
 terraform/rhel-vms/            Vault + RHEL VM clones
 terraform/win-vms/             Windows VM clones with domain join
 terraform/vault-config/        Vault SSH CA, role, policy, AppRole
@@ -295,11 +297,17 @@ docs/DESIGN.md                 this document
 RHEL clones are not guest-customised (this vCenter cannot customise RHEL 10
 networking), so job 30 sets hostnames.
 
-### Windows Server 2022 (`Win2022-VM-Template`, existing)
+### Windows Server 2022 (`tmpl-win2022`, built by job 11)
 
 | Setting | Value |
 | --- | --- |
-| State | Sysprepped, VMware Tools installed, WinRM enabled |
+| Source ISO | Windows Server 2022 evaluation ISO in the `LocalDS` content library folder |
+| Edition | Windows Server 2022 Standard (Desktop Experience) |
+| VM | 2 vCPU, 4 GB RAM, 40 GB thin, BIOS, LSI Logic SAS, VMXNET3 |
+| Install | `autounattend.xml` and setup scripts on a Packer-made floppy (A:); VMware Tools from the ESXi tools ISO (E:) |
+| Contents | VMware Tools, RDP and WinRM enabled, Server Manager off at logon, AUS Eastern time zone |
+| Administrator | Password = `labadmin` password from `homelab-lab-secrets` |
+| Generalisation | None at build time; vSphere guest customisation runs Sysprep on each clone |
 | Clones | `lab-win01`, `lab-win02`: 2 vCPU, 4 GB RAM |
 | Customisation | vSphere sets computer name, local Administrator password (= `labadmin` password), time zone (AUS Eastern), AD DNS, and joins `homelab.local` |
 | First connection | Job 61 over WinRM (NTLM) as the local Administrator, once, to install OpenSSH and trust the CA |
@@ -375,7 +383,7 @@ share, self-signed TLS, whole-subnet AppRole binding, `0777` state folder,
 | --- | --- | --- |
 | Where automation runs | AAP for everything; the Mac only seeds once | Matches the work fleet; full audit trail in AAP |
 | Windows access method | OpenSSH Server trusting the same Vault CA | One CA, one role, one pattern for both OS families; no passwords for AAP to hold |
-| Windows VMs | Clone the existing sysprepped template, join the domain | Quicker than a Packer Windows build; the template already has Tools and WinRM |
+| Windows template | Packer build in AAP (job 11), ported from the earlier lab Packer config | The existing `Win2022-VM-Template` pointed at a deleted disk; a build from code is reproducible |
 | Credential per OS | Two Machine credentials with the same key | Clear job templates; one certificate pipeline |
 | AAP API from jobs | `https://host.containers.internal` | Rootless Podman: the host's own IP loops back into the container |
 | Collection for AAP config | `awx.awx` with `/api/controller/` prefix | On Galaxy, no Automation Hub token; prefix needed behind the AAP 2.5+ gateway |
@@ -415,10 +423,12 @@ share, self-signed TLS, whole-subnet AppRole binding, `0777` state folder,
 | Job 20: AAP API timed out | Rootless Podman 5.6: host IP loops back; AAP host `/etc/hosts` maps the name to 127.0.0.1 and a stale .33 | `homelab-aap-api` host `https://host.containers.internal` |
 | Job 40: "Public key for openssl ... is not installed" | RHEL 10.1 ISO lacks Red Hat release key 4 (ML-DSA-87+Ed448), which signs current updates (RHEL-144980) | Job 30 upgrades to `redhat-release-10.1-18` (old-key signed, carries key 4), falls back to `--nogpgcheck` for that package only, imports the key file |
 | Job 60: permission denied on `vault.crt` | `/opt/vault/tls` readable only by `vault` | That play uses `become` |
+| Job 21: `Win2022-VM01.vmdk was not found` | `Win2022-VM-Template` points at a deleted disk | New template `tmpl-win2022` built by job 11 |
 
 ## 14. Open items
 
-- [ ] First run of the Windows jobs (21, 61, 70, 91).
+- [ ] First run of the Windows jobs (11, 21, 61, 70, 91).
+- [ ] Delete the broken `Win2022-VM-Template` in vCenter.
 - [ ] Rotate secrets that were shared in chat: vCenter admin password, AAP API token, the `claude` AAP user password.
 - [ ] DHCP reservations for the lab VMs.
 - [ ] Rebuild `tmpl-rhel10` so its `labadmin` password matches the reset one.

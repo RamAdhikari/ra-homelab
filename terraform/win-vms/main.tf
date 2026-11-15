@@ -1,4 +1,4 @@
-# Clone two Windows Server 2022 VMs from the sysprepped template, set the local
+# Clone two Windows Server 2022 VMs from tmpl-win2022 (job 11); vSphere customisation runs Sysprep, set the local
 # Administrator password, and join them to the AD domain (vSphere guest customisation).
 terraform {
   required_version = ">= 1.4.0"

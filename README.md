@@ -16,8 +16,9 @@ AAP › Templates › **homelab - Vault SSH lab (end to end)** › Launch.
 | # | Job template | What it does |
 | --- | --- | --- |
 | 10 | build RHEL 10 template | Packer builds `tmpl-rhel10` (skips if it exists) |
+| 11 | build Windows 2022 template | Packer builds `tmpl-win2022` (skips if it exists) |
 | 20 | provision VMs | Terraform clones `lab-vault01`, `lab-rhel01`, `lab-rhel02` |
-| 21 | provision Windows VMs | Terraform clones `lab-win01`, `lab-win02` from `Win2022-VM-Template`, joins `homelab.local` |
+| 21 | provision Windows VMs | Terraform clones `lab-win01`, `lab-win02` from `tmpl-win2022`, joins `homelab.local` |
 | 30 | bootstrap hosts | RHEL hostnames, Red Hat registration and signing key |
 | 40 | install Vault | Vault on `lab-vault01`: TLS, init, unseal, audit |
 | 50 | configure Vault SSH CA | SSH CA + AppRole; creates AAP credentials `rhel-svc-aap-signed`, `win-svc-aap-signed` |
@@ -72,6 +73,7 @@ aap/seed.yml                   AAP config as code
 playbooks/                     one playbook per job template
 roles/hashicorp_tools/         Packer, Terraform and providers for the job container
 packer/rhel10/                 RHEL 10 template
+packer/win2022/                Windows Server 2022 template
 terraform/rhel-vms/            Vault + RHEL VMs
 terraform/win-vms/             Windows VMs (domain-joined)
 terraform/vault-config/        Vault SSH CA, role, policy, AppRole

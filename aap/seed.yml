@@ -33,6 +33,7 @@
       - { name: homelab-domain-join, type: Homelab domain join }
     job_templates:
       - { id: build, name: "homelab 10 - build RHEL 10 template", playbook: playbooks/10_build_template.yml, creds: [homelab-vcenter, homelab-lab-secrets], ask_vars: true }
+      - { id: build_win, name: "homelab 11 - build Windows 2022 template", playbook: playbooks/11_build_windows_template.yml, creds: [homelab-vcenter, homelab-lab-secrets], ask_vars: true }
       - { id: provision, name: "homelab 20 - provision VMs", playbook: playbooks/20_provision_vms.yml, creds: [homelab-vcenter, homelab-aap-api] }
       - { id: provision_win, name: "homelab 21 - provision Windows VMs", playbook: playbooks/21_provision_windows_vms.yml, creds: [homelab-vcenter, homelab-lab-secrets, homelab-domain-join, homelab-aap-api] }
       - { id: bootstrap, name: "homelab 30 - bootstrap hosts", playbook: playbooks/30_bootstrap_hosts.yml, creds: [homelab-labadmin, homelab-lab-secrets] }

@@ -1,0 +1,10 @@
+# Non-secret lab values. Passwords come from AAP credentials (homelab-vcenter, homelab-lab-secrets).
+vsphere_server = "vcsa.homelab.local"
+vsphere_user   = "Administrator@HOMELAB.LOCAL"
+datacenter     = "Virtual_DC"
+cluster        = "My_Cluster"
+esxi_host      = "192.168.1.155"
+datastore      = "LocalDS"
+network        = "VM Network"
+folder         = "Templates"
+os_iso_path    = "[LocalDS] contentlib-bbc59a6f-2316-4235-b5d6-d9c07eff50bd/9b13c8d5-b257-471f-9e25-e490c5f4be59/SERVER_EVAL_x64FRE_en-us_2022_1c416aee-b1f7-4f52-9b9e-af113dba8ab4.iso"

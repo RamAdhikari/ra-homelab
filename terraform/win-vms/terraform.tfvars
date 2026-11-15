@@ -9,7 +9,7 @@ esxi_host      = "192.168.1.155"
 datastore      = "LocalDS"
 network        = "VM Network"
 folder         = "MyVMs"
-template_name  = "Win2022-VM-Template"
+template_name  = "tmpl-win2022" # built by job 11 (packer/win2022)
 domain_name    = "homelab.local"
 dns_servers    = ["192.168.1.200", "192.168.1.1"]
 
