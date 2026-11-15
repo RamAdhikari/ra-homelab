@@ -45,6 +45,25 @@
       when: rhsm_identity.rc != 0
       no_log: true
 
+    # The RHEL 10.1 ISO ships an older redhat-release without "release key 4",
+    # which signs current updates. Updating redhat-release (signed with the old
+    # keys) delivers the new key file; then import every key in it.
+    - name: Red Hat release key 4 installed
+      ansible.builtin.command: rpm -q gpg-pubkey-05707a62
+      register: rh_key4
+      changed_when: false
+      failed_when: false
+
+    - name: Newer redhat-release (brings release key 4)
+      ansible.builtin.command: dnf -y update redhat-release
+      when: rh_key4.rc != 0
+      changed_when: true
+
+    - name: Import every key in the Red Hat key file
+      ansible.builtin.command: rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+      when: rh_key4.rc != 0
+      changed_when: true
+
     - name: BaseOS and AppStream repos are enabled
       ansible.builtin.command: dnf -q repolist --enabled
       register: repos

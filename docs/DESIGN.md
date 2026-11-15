@@ -203,6 +203,7 @@ OpenShift-based AAP or several execution nodes, move state to an S3 backend
 | User | `labadmin`, wheel, passwordless sudo, password from `homelab-lab-secrets` |
 | Locale | en_AU, Australia/Sydney |
 | Generalisation | SSH host keys and machine-id cleared before conversion |
+| Known gap | Ships `redhat-release` without release key 4; job 30 fixes this on every clone |
 
 Clones are not guest-customised: this vCenter cannot customise RHEL 10 network
 settings, so job 30 sets hostnames instead.
@@ -293,7 +294,7 @@ settings, so job 30 sets hostnames instead.
 | Seed: "Playbook not found for project" | Project never synced successfully; seed did not resync | Seed now always syncs the project first |
 | Job 20: `terraform init` timed out on registry.terraform.io | Registry unreachable from the job container | Providers fetched from releases.hashicorp.com into a filesystem mirror |
 | Job 20: AAP API timed out from the job (`aap.lab.local`) | Rootless Podman 5.6 gives containers the host's IP, so the host IP loops back; AAP host `/etc/hosts` also maps the name to 127.0.0.1 and a stale .33 | `homelab-aap-api` host set to `https://host.containers.internal` |
-| Job 40: "Public key for openssl ... is not installed" | RHEL 10 key file holds several keys; `rpm_key` imports only the first, and the Ansible dnf module does not auto-import | `rpm --import` of every Red Hat key file, then `dnf -y install` |
+| Job 40: "Public key for openssl ... is not installed" | RHEL 10.1 ISO ships an older `redhat-release` without Red Hat release key 4 (ML-DSA-87+Ed448), which signs current updates (RHEL-144980) | Job 30 runs `dnf -y update redhat-release` and imports the key file |
 | Job 10: "could not find a supported CD ISO creation command" | No xorriso/mkisofs in the AAP execution environment | Template existence checked first via the vCenter API; pycdlib-based `mkisofs` stand-in for rebuilds |
 
 ## 12. Open items
