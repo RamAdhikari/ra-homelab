@@ -28,7 +28,7 @@ the AAP objects.
 ### Non-goals
 
 - Production-grade Vault (HA, auto-unseal with a KMS or HSM, CA-issued TLS).
-  Section 11 lists what changes for production.
+  Section 12 lists what changes for production.
 - Windows hosts, host-key signing, human SSH access.
 
 ## 2. Lab environment
@@ -92,7 +92,74 @@ The host never contacts Vault. It validates the certificate offline against the
 CA public key, so Vault only needs to be reachable from AAP. If Vault is down,
 running jobs continue but new jobs cannot start.
 
-## 4. Automation design
+## 4. The svc_aap service account
+
+`svc_aap` is a local Linux user on each RHEL target that exists only for AAP to
+log in as. It has no password and no `authorized_keys`: the only way in is an
+SSH certificate signed by the Vault CA whose principal is `svc_aap`.
+
+| Property | Setting | Set by |
+| --- | --- | --- |
+| Account | Local user `svc_aap`, shell `/bin/bash` (not an AD account) | Job 60 |
+| Password | Locked | Job 60 |
+| `authorized_keys` | Empty; no static key works | Job 60 (never created) |
+| How it logs in | SSH certificate signed by the Vault CA, principal `svc_aap` | Vault role `aap-linux` |
+| Privilege | Passwordless sudo, `ALL` (lab); limit to what automation needs in production | Job 60 |
+| Name | `aap_ssh_user: svc_aap` in `vars/lab.yml` | |
+
+### Trust chain
+
+```mermaid
+flowchart LR
+  subgraph Vault["Vault (lab-vault01)"]
+    CA["SSH CA private key<br/>mount ssh-client-signer"]
+    Role["Role aap-linux<br/>principals: svc_aap only<br/>TTL 2 h"]
+  end
+  subgraph AAP["AAP"]
+    Signer["Credential vault-ssh-signer<br/>AppRole login"]
+    Machine["Credential rhel-svc-aap-signed<br/>user svc_aap + private key"]
+  end
+  subgraph Host["RHEL target"]
+    Trust["/etc/ssh/trusted-user-ca-keys.pem<br/>CA public key"]
+    Acct["Local user svc_aap<br/>password locked, no authorized_keys"]
+  end
+  CA -->|public key, pushed once by job 60| Trust
+  Machine -->|public key to sign| Signer
+  Signer -->|AppRole + sign request| Role
+  Role -->|certificate for svc_aap, 2 h| Machine
+  Machine -->|SSH as svc_aap with key + certificate| Acct
+  Trust -.->|sshd checks signature| Acct
+```
+
+### What sshd checks at each login
+
+```mermaid
+flowchart TD
+  A["AAP connects as svc_aap<br/>presents key + certificate"] --> B{"Signed by a key in<br/>TrustedUserCAKeys?"}
+  B -- no --> X["Rejected"]
+  B -- yes --> C{"Principal list<br/>contains svc_aap?"}
+  C -- no --> X
+  C -- yes --> D{"Inside the validity<br/>window (2 h)?"}
+  D -- no --> X
+  D -- yes --> E["Login accepted<br/>sshd logs key ID + serial"]
+  E --> F["Ansible runs tasks,<br/>sudo for become"]
+```
+
+A leaked certificate cannot log in as root or any other user, because its only
+principal is `svc_aap`, and it stops working within 2 hours. The private key
+alone is useless: no host has it in `authorized_keys`.
+
+### Seeing it work
+
+| Job template | What it shows |
+| --- | --- |
+| `homelab 90 - connectivity check (signed cert)` | Per target: ping, hostname, login user (`svc_aap`), OS, uptime, accepted certificate key ID and serial |
+| `homelab 80 - run job with JIT certificate` | The certificate issued for the run (key ID, serial, principal, validity) and sudo working |
+
+Both use only `rhel-svc-aap-signed`. Each run gets a new certificate, so the
+serial changes from run to run.
+
+## 5. Automation design
 
 ### 4.1 Repo layout
 
@@ -129,7 +196,7 @@ collections/requirements.yml   awx.awx, installed by AAP on project sync
 | `homelab-vcenter` | VMware vCenter | 10, 20 | `VMWARE_HOST/USER/PASSWORD` for Packer and Terraform |
 | `homelab-lab-secrets` | Homelab lab secrets | 10, 30 | `PKR_VAR_build_password`, `RHSM_USERNAME`, `RHSM_PASSWORD` |
 | `homelab-labadmin` | Machine | 30, 40, 50, 60 | SSH as `labadmin` (passwordless sudo) |
-| `homelab-aap-api` | Red Hat Ansible Automation Platform | 20, 50, 70 | API token so jobs can update AAP itself. Host must be `https://host.containers.internal` (see section 12) |
+| `homelab-aap-api` | Red Hat Ansible Automation Platform | 20, 50, 70 | API token so jobs can update AAP itself. Host must be `https://host.containers.internal` (see section 13) |
 | `vault-ssh-signer` | HashiCorp Vault Signed SSH | `rhel-svc-aap-signed` | Vault URL, AppRole role_id + secret_id, Vault CA cert |
 | `rhel-svc-aap-signed` | Machine | 70, and any future job | `svc_aap` + private key; certificate fetched from Vault at launch |
 
@@ -190,7 +257,7 @@ This works for VM-based and containerised AAP with a single execution node. For
 OpenShift-based AAP or several execution nodes, move state to an S3 backend
 (MinIO).
 
-## 5. RHEL 10 template
+## 6. RHEL 10 template
 
 | Setting | Value |
 | --- | --- |
@@ -208,7 +275,7 @@ OpenShift-based AAP or several execution nodes, move state to an S3 backend
 Clones are not guest-customised: this vCenter cannot customise RHEL 10 network
 settings, so job 30 sets hostnames instead.
 
-## 6. Vault design
+## 7. Vault design
 
 | Item | Lab value |
 | --- | --- |
@@ -225,7 +292,7 @@ settings, so job 30 sets hostnames instead.
 
 `rsa-sha2-256` matters: RHEL 8 and later reject SHA-1 `ssh-rsa` certificate signatures.
 
-## 7. Security model
+## 8. Security model
 
 - **Secrets:** only in AAP credentials (encrypted) and on the Vault VM. The repo's
   `.gitignore` excludes state, keys, `.env` and plans.
@@ -239,7 +306,7 @@ settings, so job 30 sets hostnames instead.
   share, self-signed TLS, whole-subnet CIDR binding, `0777` state folder,
   `NOPASSWD: ALL` sudo for `svc_aap`, TLS verification off towards AAP and vCenter.
 
-## 8. Just-in-time certificates
+## 9. Just-in-time certificates
 
 | Property | How it is achieved |
 | --- | --- |
@@ -261,7 +328,7 @@ SSH certificates cannot be revoked one by one without a revocation list (KRL),
 so the short TTL is the control. Jobs that run longer than the TTL keep their
 existing connections but cannot open new ones; raise `ssh_cert_ttl` for those.
 
-## 9. Operations
+## 10. Operations
 
 | Task | How |
 | --- | --- |
@@ -275,7 +342,7 @@ existing connections but cannot open new ones; raise `ssh_cert_ttl` for those.
 | Rotate the CA | `TrustedUserCAKeys` accepts several keys: add the new CA key on hosts, switch the mount, then remove the old key |
 | vCenter certificate | Machine SSL certificate reissued 2026-11-12, valid 2 years: renew before November 2028 |
 
-## 10. Production differences
+## 11. Production differences
 
 | Lab | Production |
 | --- | --- |
@@ -288,7 +355,7 @@ existing connections but cannot open new ones; raise `ssh_cert_ttl` for those.
 | State on the AAP host | Remote backend with locking (S3 + DynamoDB, Terraform Cloud) |
 | Packer/Terraform downloaded per job | Custom execution environment with pinned tools |
 
-## 11. Decisions
+## 12. Decisions
 
 | Decision | Choice | Reason |
 | --- | --- | --- |
@@ -300,7 +367,7 @@ existing connections but cannot open new ones; raise `ssh_cert_ttl` for those.
 | Inventory | Static hosts updated by job 20 | No DNS for lab VMs; avoids the vCenter inventory plugin's DNS dependency |
 | Kickstart delivery | CD + explicit `inst.ks=` | OEMDRV auto-detection did not fire |
 
-## 12. Problems found and fixed
+## 13. Problems found and fixed
 
 | Problem | Cause | Fix |
 | --- | --- | --- |
@@ -319,7 +386,7 @@ existing connections but cannot open new ones; raise `ssh_cert_ttl` for those.
 | Job 40: "Public key for openssl ... is not installed" | RHEL 10.1 ISO ships an older `redhat-release` without Red Hat release key 4 (ML-DSA-87+Ed448), which signs current updates (RHEL-144980) | Job 30 upgrades to `redhat-release-10.1-18` (old-key signed, ships key 4), falls back to `--nogpgcheck` for that one package, then imports the key file |
 | Job 10: "could not find a supported CD ISO creation command" | No xorriso/mkisofs in the AAP execution environment | Template existence checked first via the vCenter API; pycdlib-based `mkisofs` stand-in for rebuilds |
 
-## 13. Open items
+## 14. Open items
 
 - [ ] First end-to-end workflow run.
 - [ ] Real Red Hat password in `homelab-lab-secrets` (job 30 needs it).
