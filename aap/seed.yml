@@ -112,6 +112,15 @@
         wait: true
         state: present
 
+    # Job templates need the playbooks on disk in AAP, so always sync first
+    # (the project task above does not sync when the project already exists).
+    - name: Sync the project from GitHub
+      awx.awx.project_update:
+        project: "{{ project_name }}"
+        organization: "{{ controller_org }}"
+        wait: true
+        timeout: 600
+
     - name: Job templates
       awx.awx.job_template:
         name: "{{ item.name }}"
