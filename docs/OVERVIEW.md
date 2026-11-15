@@ -57,6 +57,7 @@ is safe: anything already in place is skipped.
 | The whole lab built and verified | **homelab - Vault SSH lab (end to end)** |
 | Each RHEL server: host, user, certificate serial | **homelab 90 - RHEL connectivity check (signed cert)** |
 | Each Windows server: host, domain, user, certificate serial | **homelab 91 - Windows connectivity check (signed cert)** |
-| The certificate a job received, with its 2-hour validity | **homelab 80 - RHEL JIT certificate demo** |
+| The certificate a RHEL job received, with its 2-hour validity | **homelab 80 - RHEL JIT certificate demo** |
+| The certificate a Windows job received, with its 2-hour validity | **homelab 81 - Windows JIT certificate demo** |
 
 Run a check twice: the certificate serial changes, because every run gets a new certificate.

@@ -35,8 +35,8 @@ AAP › Templates › **homelab - Vault SSH lab (end to end)** › Launch.
 | 70 | verify signed SSH (RHEL and Windows) | Logs in to RHEL and Windows with certificates only |
 
 Quick tests: **homelab 90** (RHEL) and **homelab 91** (Windows) show hostname, user,
-uptime and the certificate serial for each server. **homelab 80** shows the full
-certificate issued for a run.
+uptime and the certificate serial for each server. **homelab 80** (RHEL) and
+**homelab 81** (Windows) show the full certificate issued for a run.
 
 ## One-time setup
 
@@ -72,7 +72,7 @@ certificate issued for a run.
    ```
    The first run creates the two custom credential types and stops, listing the
    credentials to create. Create them and rerun. After the workflow has run once,
-   run the seed again to add test templates 80, 90 and 91.
+   run the seed again to add test templates 80, 81, 90 and 91.
 
 ## Layout
 

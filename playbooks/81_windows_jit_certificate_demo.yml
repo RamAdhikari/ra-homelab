@@ -1,0 +1,52 @@
+# Runs on the Windows targets with the Vault-signed credential and shows the
+# just-in-time certificate AAP fetched for this job (key ID, serial, principal,
+# validity window), then proves on each server: who logged in, that the account
+# has admin rights, and the OpenSSH log record for this certificate.
+# Credentials: win-svc-aap-signed (only)
+- name: Certificate issued for this job
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read the certificate from the job's ssh-agent
+      ansible.builtin.shell: |
+        set -o pipefail
+        ssh-add -L | grep -- '-cert-v01@openssh.com' | head -1 | ssh-keygen -L -f /dev/stdin
+      register: job_cert
+      changed_when: false
+      failed_when: false
+
+    - name: Certificate details (Key ID, Serial, Principals, Valid)
+      ansible.builtin.debug:
+        msg: "{{ job_cert.stdout_lines | select('search', 'Type:|Key ID:|Serial:|Valid:|Principals:|svc_aap|permit') | map('trim') | list
+                 if job_cert.rc == 0 else
+                 'Certificate not visible in the job ssh-agent; the server log records below still show it.' }}"
+
+- name: Do work on the Windows targets as svc_aap
+  hosts: win_targets
+  gather_facts: false
+  tasks:
+    - name: Who logged in, admin rights, and the certificate OpenSSH accepted
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $id    = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $admin = ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          $ev = Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 100 -ErrorAction SilentlyContinue |
+                Where-Object { $_.Message -match 'Accepted .*ID aap-' } | Select-Object -First 1
+          [pscustomobject]@{
+            host      = $env:COMPUTERNAME
+            user      = $id.Name
+            admin     = $admin
+            logged_at = if ($ev) { $ev.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+            record    = if ($ev) { [regex]::Match($ev.Message, 'Accepted \S+ for \S+ from \S+ port \d+ ssh2: \S+ \S+ ID aap-\S+ \(serial \d+\)').Value } else { '' }
+          }
+      register: info
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "Host:          {{ info.output[0].host }} ({{ ansible_host }})"
+          - "Logged in as:  {{ info.output[0].user }}"
+          - "Administrator: {{ info.output[0].admin }}"
+          - "Login record:  {{ info.output[0].logged_at }} {{ info.output[0].record or 'not found in OpenSSH/Operational log' }}"

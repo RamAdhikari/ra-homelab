@@ -50,6 +50,7 @@
     # has made that credential.
     test_templates:
       - { name: "homelab 80 - RHEL JIT certificate demo", playbook: playbooks/80_jit_certificate_demo.yml, cred: rhel-svc-aap-signed, limit: rhel_targets }
+      - { name: "homelab 81 - Windows JIT certificate demo", playbook: playbooks/81_windows_jit_certificate_demo.yml, cred: win-svc-aap-signed, limit: win_targets }
       - { name: "homelab 90 - RHEL connectivity check (signed cert)", playbook: playbooks/90_connectivity_check.yml, cred: rhel-svc-aap-signed, limit: rhel_targets }
       - { name: "homelab 91 - Windows connectivity check (signed cert)", playbook: playbooks/91_windows_connectivity_check.yml, cred: win-svc-aap-signed, limit: win_targets }
 

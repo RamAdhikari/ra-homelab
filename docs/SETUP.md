@@ -266,7 +266,8 @@ ansible-playbook aap/seed.yml
 | --- | --- |
 | homelab 90 - RHEL connectivity check (signed cert) | RHEL: host, user `svc_aap`, OS, uptime, certificate ID + serial |
 | homelab 91 - Windows connectivity check (signed cert) | Windows: host, domain, user, OS, uptime, certificate ID + serial |
-| homelab 80 - RHEL JIT certificate demo | The certificate issued for the run and its 2-hour validity |
+| homelab 80 - RHEL JIT certificate demo | RHEL: the certificate issued for the run and its 2-hour validity |
+| homelab 81 - Windows JIT certificate demo | Windows: the certificate issued for the run, the user, Administrator rights, the OpenSSH login record |
 
 Launch one twice: the serial changes, because each run gets a fresh certificate.
 
@@ -290,7 +291,7 @@ Launch one twice: the serial changes, because each run gets a fresh certificate.
 | `homelab-domain-join` | Homelab domain join | You (7.2) | 21 | Edit credential |
 | `vault-ssh-signer` | HashiCorp Vault Signed SSH | Job 50 | via the two below | Rerun job 50 (new AppRole secret ID) |
 | `rhel-svc-aap-signed` | Machine (certificate from Vault) | Job 50 | 70, 80, 90 | Rerun job 50 (new key) |
-| `win-svc-aap-signed` | Machine (certificate from Vault) | Job 50 | 70, 91 | Rerun job 50 (new key) |
+| `win-svc-aap-signed` | Machine (certificate from Vault) | Job 50 | 70, 81, 91 | Rerun job 50 (new key) |
 
 ## 13. Quick troubleshooting
 

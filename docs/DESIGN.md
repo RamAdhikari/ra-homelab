@@ -174,6 +174,7 @@ only if the previous one succeeded, and every step is safe to rerun.
 | homelab 90 - RHEL connectivity check (signed cert) | `rhel-svc-aap-signed` | Per RHEL host: ping, hostname, user, OS, uptime, accepted certificate ID and serial |
 | homelab 91 - Windows connectivity check (signed cert) | `win-svc-aap-signed` | Per Windows host: ping, hostname, domain, user, OS, uptime, accepted certificate ID and serial |
 | homelab 80 - RHEL JIT certificate demo | `rhel-svc-aap-signed` | The certificate issued for the run (key ID, serial, principal, validity) and sudo working |
+| homelab 81 - Windows JIT certificate demo | `win-svc-aap-signed` | The certificate issued for the run, the logged-in user, Administrator rights, and the OpenSSH login record |
 
 Run any of them twice: the serial changes, because each run gets a new certificate.
 
@@ -184,7 +185,7 @@ Run any of them twice: the serial changes, because each run gets a new certifica
 | Project | `ra-homelab` (git `main`, update on launch) | `aap/seed.yml` |
 | Inventory | `homelab-lab`: groups `vault`, `rhel_targets` (RHEL), `win_targets` (Windows) | Seed; hosts by jobs 20/21; variables by job 50 |
 | Credential types | `Homelab lab secrets`, `Homelab domain join` | Seed |
-| Job templates and workflow | Section 5.1 and 5.2 | Seed (80/90/91 once their credentials exist) |
+| Job templates and workflow | Section 5.1 and 5.2 | Seed (80/81/90/91 once their credentials exist) |
 | Setting | `AWX_ISOLATION_SHOW_PATHS` += `/var/lib/homelab-tfstate` | Seed |
 
 ### 5.4 Credentials
@@ -198,8 +199,8 @@ Run any of them twice: the serial changes, because each run gets a new certifica
 | `homelab-labadmin` | Machine | `labadmin` + password (RHEL bootstrap) | 30, 40, 50, 60 | You |
 | `homelab-aap-api` | Red Hat AAP | Host `https://host.containers.internal`, API token | 20, 21, 50, 70 | You |
 | `vault-ssh-signer` | HashiCorp Vault Signed SSH | Vault URL, AppRole role ID + secret ID, Vault CA cert | The two below | Job 50 |
-| `rhel-svc-aap-signed` | Machine | `svc_aap` + private key; certificate from Vault at launch | 80, 90, 70 | Job 50 |
-| `win-svc-aap-signed` | Machine | Same key; certificate from Vault at launch | 91, 70 | Job 50 |
+| `rhel-svc-aap-signed` | Machine | `svc_aap` + private key; certificate from Vault at launch | 70, 80, 90 | Job 50 |
+| `win-svc-aap-signed` | Machine | Same key; certificate from Vault at launch | 70, 81, 91 | Job 50 |
 
 ### 5.5 Inside the job container
 
@@ -340,7 +341,7 @@ The full step-by-step guide, with every credential field, is [SETUP.md](SETUP.md
 4. Run `ansible-playbook aap/seed.yml` from a machine with the AAP token. It creates the credential types and stops.
 5. Create `homelab-lab-secrets` and `homelab-domain-join`, then rerun the seed. It creates the project, job templates and workflow.
 6. Launch the workflow.
-7. Run the seed once more to create test templates 80, 90 and 91 (their credentials now exist).
+7. Run the seed once more to create test templates 80, 81, 90 and 91 (their credentials now exist).
 
 ## 11. Decisions
 
