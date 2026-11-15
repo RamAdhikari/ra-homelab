@@ -1,5 +1,5 @@
-# Builds the RHEL 10 template with Packer. Skips cleanly if it already exists;
-# launch with rebuild_template=true to replace it.
+# Builds the RHEL 10 template with Packer. Asks vCenter first and skips the
+# build when the template exists; launch with rebuild_template=true to replace it.
 # Credentials: homelab-vcenter (VMware vCenter), homelab-lab-secrets
 - name: Build RHEL 10 template
   hosts: localhost
@@ -9,7 +9,9 @@
     - ../vars/lab.yml
   vars:
     rebuild_template: false
+    template_name: tmpl-rhel10
     packer_dir: "{{ playbook_dir }}/../packer/rhel10"
+    vcenter: "https://{{ lookup('env', 'VMWARE_HOST') }}"
   pre_tasks:
     - name: Required credentials are attached
       ansible.builtin.assert:
@@ -18,32 +20,83 @@
           - lookup('env', 'VMWARE_PASSWORD') | length > 0
           - lookup('env', 'PKR_VAR_build_password') | length > 0
         fail_msg: Attach the homelab-vcenter and homelab-lab-secrets credentials to this job template.
-  roles:
-    - hashicorp_tools
   tasks:
-    - name: packer init
-      ansible.builtin.command:
-        argv: ["{{ packer_bin }}", init, .]
-        chdir: "{{ packer_dir }}"
-      environment: "{{ hc_env }}"
-      changed_when: false
+    - name: vCenter API session
+      ansible.builtin.uri:
+        url: "{{ vcenter }}/api/session"
+        method: POST
+        url_username: "{{ lookup('env', 'VMWARE_USER') }}"
+        url_password: "{{ lookup('env', 'VMWARE_PASSWORD') }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200, 201]
+      register: vc_session
+      no_log: true
 
-    - name: packer build
-      ansible.builtin.command:
-        argv: >-
-          {{ [packer_bin, 'build', '-color=false',
-              '-var=vsphere_server=' ~ lookup('env', 'VMWARE_HOST'),
-              '-var=vsphere_user=' ~ lookup('env', 'VMWARE_USER')]
-             + (['-force'] if rebuild_template | bool else [])
-             + ['.'] }}
-        chdir: "{{ packer_dir }}"
-      environment: "{{ hc_env | combine({'PKR_VAR_vsphere_password': lookup('env', 'VMWARE_PASSWORD')}) }}"
-      register: packer_build
-      failed_when:
-        - packer_build.rc != 0
-        - "'already exists' not in (packer_build.stdout ~ packer_build.stderr)"
-      changed_when: packer_build.rc == 0
+    - name: Look up the template
+      ansible.builtin.uri:
+        url: "{{ vcenter }}/api/vcenter/vm?names={{ template_name }}"
+        headers:
+          vmware-api-session-id: "{{ vc_session.json }}"
+        validate_certs: false
+      register: vc_vms
 
-    - name: Result
+    - name: Template status
+      ansible.builtin.set_fact:
+        template_exists: "{{ vc_vms.json | length > 0 }}"
+
+    - name: Nothing to build
       ansible.builtin.debug:
-        msg: "{{ 'Template built.' if packer_build.rc == 0 else 'Template already exists, nothing to do (launch with rebuild_template=true to replace it).' }}"
+        msg: "{{ template_name }} already exists. Launch with rebuild_template=true to replace it."
+      when: template_exists | bool and not rebuild_template | bool
+
+    - name: Build with Packer
+      when: not template_exists | bool or rebuild_template | bool
+      block:
+        - name: Download Packer
+          ansible.builtin.include_role:
+            name: hashicorp_tools
+
+        - name: pycdlib for the kickstart CD (no xorriso/mkisofs in the execution environment)
+          ansible.builtin.command:
+            cmd: python3 -m pip install --quiet --disable-pip-version-check --target {{ hc_tools_dir }}/py pycdlib
+            creates: "{{ hc_tools_dir }}/py/pycdlib"
+
+        - name: Shim directory
+          ansible.builtin.file:
+            path: "{{ hc_tools_dir }}/bin"
+            state: directory
+            mode: "0755"
+
+        - name: mkisofs stand-in that Packer will find on PATH
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../roles/hashicorp_tools/files/mkisofs"
+            dest: "{{ hc_tools_dir }}/bin/mkisofs"
+            mode: "0755"
+
+        - name: Packer environment
+          ansible.builtin.set_fact:
+            packer_env: >-
+              {{ hc_env | combine({
+                   'PATH': hc_tools_dir ~ '/bin:' ~ lookup('env', 'PATH'),
+                   'PKR_VAR_vsphere_password': lookup('env', 'VMWARE_PASSWORD')}) }}
+          no_log: true
+
+        - name: packer init
+          ansible.builtin.command:
+            argv: ["{{ packer_bin }}", init, .]
+            chdir: "{{ packer_dir }}"
+          environment: "{{ packer_env }}"
+          changed_when: false
+
+        - name: packer build
+          ansible.builtin.command:
+            argv: >-
+              {{ [packer_bin, 'build', '-color=false',
+                  '-var=vsphere_server=' ~ lookup('env', 'VMWARE_HOST'),
+                  '-var=vsphere_user=' ~ lookup('env', 'VMWARE_USER')]
+                 + (['-force'] if rebuild_template | bool else [])
+                 + ['.'] }}
+            chdir: "{{ packer_dir }}"
+          environment: "{{ packer_env }}"
+          changed_when: true

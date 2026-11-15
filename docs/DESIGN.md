@@ -145,7 +145,7 @@ Each node runs only if the previous one succeeded. Every job is idempotent.
 
 | Job | Runs on | What it does | Idempotence |
 | --- | --- | --- | --- |
-| 10 build template | job container | `packer build` of `tmpl-rhel10` | Skips if the template exists; `rebuild_template=true` forces a rebuild |
+| 10 build template | job container | Asks the vCenter API whether `tmpl-rhel10` exists; if not (or `rebuild_template=true`), runs `packer build` | Skips Packer entirely when the template exists |
 | 20 provision VMs | job container | Terraform clones 3 VMs; writes hosts, IPs and groups into the AAP inventory | Terraform plan: applies only on changes |
 | 30 bootstrap hosts | lab VMs | Hostname, `/etc/hosts` for all lab VMs, Red Hat registration, repo check | Registers only if `subscription-manager identity` fails |
 | 40 install Vault | lab-vault01 | HashiCorp repo, Vault, self-signed TLS, config, firewall, init, unseal, boot-time unseal service, file audit device | Init only when uninitialised; unseal only when sealed |
@@ -159,8 +159,14 @@ AAP runs jobs in its default execution environment. Rather than building a
 custom image, `roles/hashicorp_tools` downloads pinned releases (Packer 1.11.2,
 Terraform 1.9.8) from `releases.hashicorp.com`, verifies them against the
 published SHA256SUMS, and extracts them under `/tmp/hc-tools`. Packer and
-Terraform plugins download at run time too. The AAP node therefore needs
-outbound HTTPS to HashiCorp, GitHub and Galaxy.
+Terraform plugins download at run time too.
+
+Packer builds the kickstart CD with `xorriso` or `mkisofs`, and the default
+execution environment has neither. For a build, job 10 installs `pycdlib` with
+pip and puts a small `mkisofs` stand-in (`roles/hashicorp_tools/files/mkisofs`)
+first on `PATH`. It writes an ISO 9660 image with Joliet and Rock Ridge, so the
+installer sees `ks.cfg` under its real name. The AAP node therefore needs
+outbound HTTPS to HashiCorp, GitHub, Galaxy and PyPI.
 
 ### 4.5 Terraform state
 
@@ -280,6 +286,7 @@ settings, so job 30 sets hostnames instead.
 | AAP rejected `:Z` mount option | Only `z`, `O`, `ro`, `rw` allowed | Changed, then removed (below) |
 | Every AAP job failed: `lsetxattr ... operation not permitted` | Relabel of a root-owned folder on each job | Plain mount; folder owned by `aap` and labelled `container_file_t` |
 | Seed: "Playbook not found for project" | Project never synced successfully; seed did not resync | Seed now always syncs the project first |
+| Job 10: "could not find a supported CD ISO creation command" | No xorriso/mkisofs in the AAP execution environment | Template existence checked first via the vCenter API; pycdlib-based `mkisofs` stand-in for rebuilds |
 
 ## 12. Open items
 

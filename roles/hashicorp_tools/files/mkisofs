@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Minimal mkisofs stand-in for Packer's cd_content, built on pycdlib.
+
+The default AAP execution environment has no xorriso/mkisofs. Packer calls
+`mkisofs -joliet -volid LABEL -o OUT.iso SRC_DIR`; this script accepts that
+(and -V/-output spellings), ignores other flags, and writes an ISO 9660 image
+with Joliet and Rock Ridge so Linux sees the original file names.
+"""
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "py"))
+import pycdlib  # noqa: E402
+
+args = sys.argv[1:]
+label, out, src = "CDROM", None, None
+i = 0
+while i < len(args):
+    a = args[i]
+    if a in ("-volid", "-V"):
+        label, i = args[i + 1], i + 2
+    elif a in ("-o", "-output"):
+        out, i = args[i + 1], i + 2
+    elif a.startswith("-"):
+        i += 1
+    else:
+        src, i = a, i + 1
+if not out or not src:
+    sys.exit("usage: mkisofs -volid LABEL -o OUT.iso DIR")
+
+
+def iso_name(name, is_dir):
+    base, dot, ext = name.upper().rpartition(".")
+    if not dot or is_dir:
+        base, ext = name.upper(), ""
+    clean = lambda s: re.sub(r"[^A-Z0-9_]", "_", s)
+    return clean(base)[:30] + ("." + clean(ext)[:3] if ext else "") + ("" if is_dir else ";1")
+
+
+iso = pycdlib.PyCdlib()
+iso.new(interchange_level=3, joliet=3, rock_ridge="1.09", vol_ident=label.upper()[:32])
+for root, dirs, files in os.walk(src):
+    rel = os.path.relpath(root, src)
+    parts = [] if rel == "." else rel.split(os.sep)
+    iso_parent = "/" + "/".join(iso_name(p, True) for p in parts)
+    joliet_parent = "/" + "/".join(parts)
+    for d in sorted(dirs):
+        iso.add_directory(
+            iso_path=iso_parent.rstrip("/") + "/" + iso_name(d, True),
+            rr_name=d,
+            joliet_path=joliet_parent.rstrip("/") + "/" + d,
+        )
+    for f in sorted(files):
+        iso.add_file(
+            os.path.join(root, f),
+            iso_path=iso_parent.rstrip("/") + "/" + iso_name(f, False),
+            rr_name=f,
+            joliet_path=joliet_parent.rstrip("/") + "/" + f,
+        )
+iso.write(out)
+iso.close()
