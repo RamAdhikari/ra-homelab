@@ -7,6 +7,7 @@ service account `svc_aap`. No stored passwords or static keys.
 Everything, from VM templates to the final login test, is code in this repo and
 runs from one AAP workflow.
 
+**Setting it up from scratch, including every credential: [docs/SETUP.md](docs/SETUP.md).**
 **Full design, flows and troubleshooting history: [docs/DESIGN.md](docs/DESIGN.md).**
 
 ## Run it

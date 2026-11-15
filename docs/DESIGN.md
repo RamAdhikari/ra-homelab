@@ -370,6 +370,8 @@ share, self-signed TLS, whole-subnet AppRole binding, `0777` state folder,
 
 ## 10. Bringing it up from scratch
 
+The full step-by-step guide, with every credential field, is [SETUP.md](SETUP.md). Summary:
+
 1. Push the repo to GitHub.
 2. In AAP create `homelab-github`, `homelab-vcenter`, `homelab-labadmin`, `homelab-aap-api`.
 3. On the AAP host create `/var/lib/homelab-tfstate` (owned by `aap`, labelled `container_file_t`).
