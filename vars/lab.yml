@@ -19,15 +19,8 @@ lab_win_groups:
   lab-win01: win_targets
   lab-win02: win_targets
 
-# Bootstrap connection for win_targets (WinRM as the local Administrator).
-# Jobs that use the Vault-signed certificate override these with SSH.
-win_bootstrap_vars:
-  ansible_connection: winrm
-  ansible_port: 5985
-  ansible_winrm_transport: ntlm
-  ansible_winrm_server_cert_validation: ignore
-
-# Play vars that switch win_targets to OpenSSH + PowerShell for signed-cert jobs
+# Inventory group vars for win_targets: AAP reaches Windows over OpenSSH with
+# PowerShell. Job 61 (bootstrap) overrides these with WinRM in its play vars.
 win_ssh_vars:
   ansible_connection: ssh
   ansible_shell_type: powershell

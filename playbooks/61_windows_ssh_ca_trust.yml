@@ -10,6 +10,12 @@
   vars_files:
     - ../vars/lab.yml
   vars:
+    # One-time bootstrap over WinRM; overrides the inventory's SSH settings.
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_shell_type: powershell
     ansible_user: Administrator
     ansible_password: "{{ lookup('env', 'PKR_VAR_build_password') }}"
     ssh_dir: C:\ProgramData\ssh

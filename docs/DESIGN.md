@@ -197,7 +197,7 @@ only if the previous one succeeded, and every step is safe to rerun.
 | 10 | build RHEL 10 template | job container | Packer builds `tmpl-rhel10` | Skips if it exists; `rebuild_template=true` replaces it |
 | 11 | build Windows 2022 template | job container | Packer builds `tmpl-win2022` from the Server 2022 ISO on LocalDS (answer file on a floppy) | Skips if it exists; `rebuild_template=true` replaces it |
 | 20 | provision VMs | job container | Terraform clones Vault + 2 RHEL VMs; writes IPs to the inventory | Plans first, applies only changes |
-| 21 | provision Windows VMs | job container | Terraform clones 2 Windows VMs from `tmpl-win2022`, sets the local Administrator password, joins `homelab.local`; writes IPs and WinRM settings to the inventory | Plans first, applies only changes |
+| 21 | provision Windows VMs | job container | Terraform clones 2 Windows VMs from `tmpl-win2022`, sets the local Administrator password, joins `homelab.local`; writes IPs to the inventory; group `win_targets` connects over OpenSSH + PowerShell | Plans first, applies only changes |
 | 30 | bootstrap hosts | Vault + RHEL VMs | Hostname, `/etc/hosts`, Red Hat registration, Red Hat release key 4 | Registers only if not registered |
 | 40 | install Vault | lab-vault01 | Signing keys, Vault, TLS, config, firewall, init, unseal, boot-time unseal, audit log | Init only once; unseal only if sealed |
 | 50 | configure Vault SSH CA | Vault + job container | Terraform: CA, role, policy, AppRole. New secret ID and key; creates/updates both Machine credentials; publishes the CA public key as an inventory variable | Rotates the secret ID and key each run |
@@ -311,8 +311,8 @@ networking), so job 30 sets hostnames.
 | Generalisation | None at build time; vSphere guest customisation runs Sysprep on each clone |
 | Clones | `lab-win01`, `lab-win02`: 2 vCPU, 4 GB RAM |
 | Customisation | vSphere sets computer name, local Administrator password (= `labadmin` password), time zone (AUS Eastern), AD DNS, and joins `homelab.local` |
-| First connection | Job 61 over WinRM (NTLM) as the local Administrator, once, to install OpenSSH and trust the CA |
-| After that | SSH only, as `svc_aap` with a Vault-signed certificate |
+| First connection | Job 61 over WinRM (NTLM) as the local Administrator, once, to install OpenSSH and trust the CA (its play vars override the inventory) |
+| After that | SSH only (inventory group vars: `ansible_connection: ssh`, `ansible_shell_type: powershell`), as `svc_aap` with a Vault-signed certificate |
 
 ## 7. Vault
 
@@ -427,6 +427,7 @@ share, self-signed TLS, whole-subnet AppRole binding, `0777` state folder,
 | Job 11: Windows VM stuck on a black screen with a cursor | BIOS tried to boot the non-bootable answer-file floppy | `boot_order = "disk,cdrom"` |
 | Job 11: still a black screen; Windows CD not connected | Content-library ISO path no longer existed | Build uses `en-us_windows_server_2022_updated_nov_2024_x64.iso` on LocalDS, with a setup key |
 | Job 61: `Service 'sshd' is not installed` | The OpenSSH Windows feature downloads from Windows Update, unreachable from the VMs; the failure is non-fatal | Fallback installs Microsoft's Win32-OpenSSH MSI, downloaded by the job container |
+| Job 70: ad hoc refused `ansible_connection` / `ansible_shell_type` | AAP forbids connection variables in ad hoc commands | SSH settings live in the `win_targets` group vars; job 61 overrides them for WinRM |
 | Job 21: `Win2022-VM01.vmdk was not found` | `Win2022-VM-Template` points at a deleted disk | New template `tmpl-win2022` built by job 11 |
 
 ## 14. Open items

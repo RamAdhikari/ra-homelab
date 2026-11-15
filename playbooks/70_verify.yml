@@ -41,10 +41,6 @@
         credential: "{{ win_machine_credential }}"
         module_name: win_ping
         limit: win_targets
-        extra_vars:
-          ansible_connection: ssh
-          ansible_shell_type: powershell
-          ansible_port: 22
         wait: true
         timeout: 300
       register: adhoc_win

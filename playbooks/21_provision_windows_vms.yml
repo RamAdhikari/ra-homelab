@@ -1,6 +1,6 @@
 # Clones two Windows Server 2022 VMs from tmpl-win2022 (job 11) with Terraform,
 # joins them to homelab.local, then writes them into the AAP inventory
-# (group win_targets, WinRM bootstrap connection vars).
+# (group win_targets; group vars make AAP connect over OpenSSH + PowerShell).
 # Credentials: homelab-vcenter, homelab-lab-secrets, homelab-domain-join, homelab-aap-api
 - name: Provision Windows VMs
   hosts: localhost
@@ -59,10 +59,10 @@
       loop_control:
         label: "{{ item.key }} = {{ item.value }}"
 
-    - name: Group win_targets with the WinRM bootstrap connection
+    - name: Group win_targets, connecting over OpenSSH (job 61 overrides with WinRM for its bootstrap)
       awx.awx.group:
         name: win_targets
         inventory: "{{ lab_inventory }}"
         hosts: "{{ lab_win_groups | dict2items | selectattr('value', 'equalto', 'win_targets') | map(attribute='key') | map('regex_replace', '$', '.' ~ lab_domain) | list }}"
-        variables: "{{ win_bootstrap_vars }}"
+        variables: "{{ win_ssh_vars }}"
         state: present
