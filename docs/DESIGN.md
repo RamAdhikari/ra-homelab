@@ -202,7 +202,7 @@ only if the previous one succeeded, and every step is safe to rerun.
 | 40 | install Vault | lab-vault01 | Signing keys, Vault, TLS, config, firewall, init, unseal, boot-time unseal, audit log | Init only once; unseal only if sealed |
 | 50 | configure Vault SSH CA | Vault + job container | Terraform: CA, role, policy, AppRole. New secret ID and key; creates/updates both Machine credentials; publishes the CA public key as an inventory variable | Rotates the secret ID and key each run |
 | 60 | trust SSH CA on targets | RHEL VMs | `svc_aap` + sudo, CA key file, `TrustedUserCAKeys` | Idempotent |
-| 61 | Windows OpenSSH + trust SSH CA | Windows VMs (WinRM, once) | OpenSSH Server, firewall, PowerShell default shell, `svc_aap` in Administrators, CA key file, `TrustedUserCAKeys` | Idempotent |
+| 61 | Windows OpenSSH + trust SSH CA | Windows VMs (WinRM, once) | OpenSSH Server (Windows feature, or Microsoft's Win32-OpenSSH 9.8.3 MSI when Windows Update is unreachable), firewall, PowerShell default shell, `svc_aap` in Administrators, CA key file, `TrustedUserCAKeys` | Idempotent |
 | 70 | verify signed SSH | job container | Ad hoc `id -un` on RHEL and `win_ping` on Windows, both with signed credentials only | Read-only |
 
 ### 5.2 Test job templates
@@ -248,7 +248,7 @@ AAP runs every job in its default execution environment. Nothing extra is baked 
 - **Kickstart CD for Packer**: there is no `xorriso`/`mkisofs` in the image, so job 10 installs `pycdlib` and puts a small `mkisofs` stand-in on `PATH`.
 - **Collections** `awx.awx`, `ansible.windows`, `community.windows` install on project sync.
 
-The AAP node therefore needs outbound HTTPS to HashiCorp, GitHub, Galaxy and PyPI.
+The AAP node therefore needs outbound HTTPS to HashiCorp, GitHub (also for the Win32-OpenSSH MSI), Galaxy and PyPI.
 
 ### 5.6 Terraform state
 
@@ -426,6 +426,7 @@ share, self-signed TLS, whole-subnet AppRole binding, `0777` state folder,
 | Job 60: permission denied on `vault.crt` | `/opt/vault/tls` readable only by `vault` | That play uses `become` |
 | Job 11: Windows VM stuck on a black screen with a cursor | BIOS tried to boot the non-bootable answer-file floppy | `boot_order = "disk,cdrom"` |
 | Job 11: still a black screen; Windows CD not connected | Content-library ISO path no longer existed | Build uses `en-us_windows_server_2022_updated_nov_2024_x64.iso` on LocalDS, with a setup key |
+| Job 61: `Service 'sshd' is not installed` | The OpenSSH Windows feature downloads from Windows Update, unreachable from the VMs; the failure is non-fatal | Fallback installs Microsoft's Win32-OpenSSH MSI, downloaded by the job container |
 | Job 21: `Win2022-VM01.vmdk was not found` | `Win2022-VM-Template` points at a deleted disk | New template `tmpl-win2022` built by job 11 |
 
 ## 14. Open items

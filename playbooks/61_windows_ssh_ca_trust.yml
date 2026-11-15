@@ -13,6 +13,9 @@
     ansible_user: Administrator
     ansible_password: "{{ lookup('env', 'PKR_VAR_build_password') }}"
     ssh_dir: C:\ProgramData\ssh
+    # Fallback installer when the Windows feature cannot be downloaded
+    win32_openssh_release: v9.8.3.0p2-Preview
+    win32_openssh_msi: OpenSSH-Win64-v9.8.3.0.msi
   pre_tasks:
     - name: CA public key is published in the inventory
       ansible.builtin.assert:
@@ -25,14 +28,51 @@
       ansible.builtin.wait_for_connection:
         timeout: 600
   tasks:
-    - name: OpenSSH Server feature
+    # Preferred: the built-in Windows feature. It downloads from Windows Update,
+    # which a lab VM often cannot reach; Windows records that as a non-fatal error.
+    - name: OpenSSH Server feature (Windows Update)
       ansible.windows.win_powershell:
         script: |
+          $Ansible.Changed = $false
+          if (Get-Service sshd -ErrorAction SilentlyContinue) { return }
           $cap = Get-WindowsCapability -Online -Name 'OpenSSH.Server*'
           if ($cap.State -ne 'Installed') {
-            Add-WindowsCapability -Online -Name $cap.Name | Out-Null
-            $Ansible.Changed = $true
-          } else { $Ansible.Changed = $false }
+            try { Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null; $Ansible.Changed = $true }
+            catch { Write-Warning "Windows feature install failed: $($_.Exception.Message)" }
+          }
+      failed_when: false
+
+    - name: Is sshd installed now
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          [bool](Get-Service sshd -ErrorAction SilentlyContinue)
+      register: sshd_present
+
+    # Fallback: Microsoft's Win32-OpenSSH MSI, downloaded by the job container
+    # (which has internet access) and copied to the VM over WinRM.
+    - name: Fallback - download the Win32-OpenSSH MSI in the job container
+      ansible.builtin.get_url:
+        url: "https://github.com/PowerShell/Win32-OpenSSH/releases/download/{{ win32_openssh_release }}/{{ win32_openssh_msi }}"
+        dest: "/tmp/{{ win32_openssh_msi }}"
+        mode: "0644"
+      delegate_to: localhost
+      run_once: true
+      when: not sshd_present.output[0]
+
+    - name: Fallback - copy the MSI to the VM
+      ansible.windows.win_copy:
+        src: "/tmp/{{ win32_openssh_msi }}"
+        dest: 'C:\Windows\Temp\{{ win32_openssh_msi }}'
+      when: not sshd_present.output[0]
+
+    - name: Fallback - install Win32-OpenSSH (server and client)
+      ansible.windows.win_package:
+        path: 'C:\Windows\Temp\{{ win32_openssh_msi }}'
+        arguments: /quiet /norestart
+        creates_service: sshd
+        state: present
+      when: not sshd_present.output[0]
 
     - name: sshd starts automatically and is running
       ansible.windows.win_service:
