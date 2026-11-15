@@ -156,6 +156,18 @@
         state: present
       when: signed_cred.json.count | int > 0
 
+    - name: Job template - basic connectivity check with the signed certificate
+      awx.awx.job_template:
+        name: "homelab 90 - connectivity check (signed cert)"
+        organization: "{{ controller_org }}"
+        project: "{{ project_name }}"
+        inventory: "{{ lab_inventory }}"
+        playbook: playbooks/90_connectivity_check.yml
+        credentials: ["{{ machine_credential }}"]
+        limit: rhel_targets
+        state: present
+      when: signed_cred.json.count | int > 0
+
     - name: End-to-end workflow
       awx.awx.workflow_job_template:
         name: "{{ workflow_name }}"

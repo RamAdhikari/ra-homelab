@@ -1,0 +1,36 @@
+# Basic connectivity check using only the Vault-signed SSH credential.
+# For each target: ping, hostname, login user, OS, uptime, and the certificate
+# key ID sshd accepted for this login.
+# Credentials: rhel-svc-aap-signed (only)
+- name: Connectivity check with a Vault-signed certificate
+  hosts: rhel_targets
+  gather_facts: false
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:
+
+    - name: Facts
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: Uptime
+      ansible.builtin.command: uptime -p
+      register: up
+      changed_when: false
+
+    - name: Certificate sshd accepted for this login
+      ansible.builtin.shell: |
+        journalctl -u sshd --since "-5 min" --no-pager -o cat | grep -oE 'ID aap-[^ ]+ \(serial [0-9]+\)' | tail -1
+      become: true
+      register: cert_id
+      changed_when: false
+      failed_when: false
+
+    - name: Result
+      ansible.builtin.debug:
+        msg:
+          - "Host:        {{ ansible_facts.hostname }} ({{ ansible_host }})"
+          - "Logged in as: {{ ansible_facts.user_id }}"
+          - "OS:          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}"
+          - "Uptime:      {{ up.stdout }}"
+          - "Certificate: {{ cert_id.stdout | default('', true) or 'not found in sshd log' }}"

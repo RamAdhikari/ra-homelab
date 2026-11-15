@@ -249,6 +249,9 @@ settings, so job 30 sets hostnames instead.
 | One principal | The certificate is valid only for `svc_aap` |
 | Traceable | Vault audit log records each signing; each host's sshd log records the certificate's key ID and serial |
 
+Job template **homelab 90 - connectivity check (signed cert)** (`playbooks/90_connectivity_check.yml`)
+is the quick test: ping, hostname, login user, OS, uptime and the accepted certificate ID per target.
+
 Job template **homelab 80 - run job with JIT certificate** (`playbooks/80_jit_certificate_demo.yml`)
 uses only `rhel-svc-aap-signed`. It prints the certificate issued for that run
 (key ID, serial, principal, validity window) and the matching sshd login record
