@@ -54,9 +54,20 @@
       changed_when: false
       failed_when: false
 
-    - name: Newer redhat-release (brings release key 4)
-      ansible.builtin.command: dnf -y update redhat-release
+    # redhat-release 10.1-18 is still signed with the old keys but carries key 4
+    # (RHEL-144980). Newer builds are signed with key 4 itself, so they cannot
+    # bootstrap it. If 10.1-18 is unavailable, install redhat-release alone
+    # without the signature check (it still comes from the Red Hat CDN over TLS).
+    - name: redhat-release 10.1-18 (signed with old keys, ships release key 4)
+      ansible.builtin.command: dnf -y upgrade redhat-release-10.1-18.el10
+      register: rh_release
       when: rh_key4.rc != 0
+      failed_when: false
+      changed_when: rh_release.rc == 0
+
+    - name: Fallback - redhat-release only, without signature check
+      ansible.builtin.command: dnf -y --nogpgcheck upgrade redhat-release
+      when: rh_key4.rc != 0 and rh_release.rc != 0
       changed_when: true
 
     - name: Import every key in the Red Hat key file
