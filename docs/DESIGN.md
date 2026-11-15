@@ -28,7 +28,7 @@ the AAP objects.
 ### Non-goals
 
 - Production-grade Vault (HA, auto-unseal with a KMS or HSM, CA-issued TLS).
-  Section 12 lists what changes for production.
+  Section 11 lists what changes for production.
 - Windows hosts, host-key signing, human SSH access.
 
 ## 2. Lab environment
