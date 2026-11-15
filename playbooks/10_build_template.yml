@@ -1,5 +1,7 @@
 # Builds the RHEL 10 template with Packer. Asks vCenter first and skips the
 # build when the template exists; launch with rebuild_template=true to replace it.
+# The vCenter REST API does not always list classic VM templates, so Packer's own
+# "already exists" error also counts as success.
 # Credentials: homelab-vcenter (VMware vCenter), homelab-lab-secrets
 - name: Build RHEL 10 template
   hosts: localhost
@@ -56,6 +58,7 @@
         - name: Download Packer
           ansible.builtin.include_role:
             name: hashicorp_tools
+            public: true
 
         - name: pycdlib for the kickstart CD (no xorriso/mkisofs in the execution environment)
           ansible.builtin.command:
@@ -99,4 +102,12 @@
                  + ['.'] }}
             chdir: "{{ packer_dir }}"
           environment: "{{ packer_env }}"
-          changed_when: true
+          register: packer_build
+          failed_when:
+            - packer_build.rc != 0
+            - "'already exists' not in (packer_build.stdout ~ packer_build.stderr)"
+          changed_when: packer_build.rc == 0
+
+        - name: Build result
+          ansible.builtin.debug:
+            msg: "{{ 'Template built.' if packer_build.rc == 0 else template_name ~ ' already exists, nothing to do (rebuild_template=true replaces it).' }}"
