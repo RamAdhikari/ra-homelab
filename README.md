@@ -4,6 +4,8 @@ Home lab automation, run entirely from AAP: RHEL 10 template (Packer), lab VMs
 (Terraform), Vault as an SSH CA, and AAP logging in to RHEL with Vault-signed
 SSH certificates.
 
+Full design, decisions and troubleshooting history: [docs/DESIGN.md](docs/DESIGN.md).
+
 Lab: VMware Fusion > nested ESXi > vCenter `vcsa.homelab.local`; VMs on ESXi
 `192.168.1.155`; AAP at `https://aap.lab.local`.
 
