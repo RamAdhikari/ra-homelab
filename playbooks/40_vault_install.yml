@@ -20,20 +20,24 @@
         gpgkey: https://rpm.releases.hashicorp.com/gpg
         gpgcheck: true
 
-    # RHEL 10's dnf does not auto-import signing keys when Ansible installs
-    # packages, so import Red Hat's and HashiCorp's keys explicitly.
-    - name: Package signing keys
-      ansible.builtin.rpm_key:
-        key: "{{ item }}"
-        state: present
-      loop:
-        - /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
-        - https://rpm.releases.hashicorp.com/gpg
+    # RHEL 10's key file holds several keys and ansible.builtin.rpm_key imports
+    # only the first, so import every Red Hat key file with rpm itself.
+    - name: Red Hat signing keys (all keys in every file)
+      ansible.builtin.shell: |
+        for f in /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-*; do rpm --import "$f"; done
+      changed_when: false
 
-    - name: Packages
-      ansible.builtin.dnf:
-        name: [vault, openssl, curl]
+    - name: HashiCorp signing key
+      ansible.builtin.rpm_key:
+        key: https://rpm.releases.hashicorp.com/gpg
         state: present
+
+    # Plain dnf -y also imports any key the repo file lists, which the Ansible
+    # dnf module does not do on RHEL 10.
+    - name: Packages
+      ansible.builtin.command:
+        cmd: dnf -y install vault openssl curl
+        creates: /usr/bin/vault
 
     - name: Self-signed TLS certificate (SANs = FQDN, short name, IP, loopback)
       ansible.builtin.command:
