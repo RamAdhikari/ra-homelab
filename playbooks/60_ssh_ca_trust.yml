@@ -2,6 +2,7 @@
 # Credentials: homelab-labadmin
 - name: Read the CA public key from Vault
   hosts: vault
+  become: true   # /opt/vault/tls is readable only by the vault user
   gather_facts: false
   vars_files:
     - ../vars/lab.yml
