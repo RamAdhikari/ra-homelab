@@ -44,7 +44,7 @@ works without a custom image.
    | `homelab-github` | Source Control | GitHub username + fine-grained PAT (Contents: read) |
    | `homelab-vcenter` | VMware vCenter | `vcsa.homelab.local`, `Administrator@HOMELAB.LOCAL`, password |
    | `homelab-labadmin` | Machine | `labadmin` + the template build password |
-   | `homelab-aap-api` | Red Hat Ansible Automation Platform | `https://aap.lab.local`, a token, verify SSL off |
+   | `homelab-aap-api` | Red Hat Ansible Automation Platform | `https://host.containers.internal`, a token, verify SSL off (jobs run in rootless Podman on the AAP host; the host's own IP loops back into the container) |
    | `homelab-lab-secrets` | Homelab lab secrets (created by step 4) | build password, Red Hat login and password |
 
    `homelab-lab-secrets` can only be created after the first seed run creates its type.

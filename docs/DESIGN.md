@@ -129,7 +129,7 @@ collections/requirements.yml   awx.awx, installed by AAP on project sync
 | `homelab-vcenter` | VMware vCenter | 10, 20 | `VMWARE_HOST/USER/PASSWORD` for Packer and Terraform |
 | `homelab-lab-secrets` | Homelab lab secrets | 10, 30 | `PKR_VAR_build_password`, `RHSM_USERNAME`, `RHSM_PASSWORD` |
 | `homelab-labadmin` | Machine | 30, 40, 50, 60 | SSH as `labadmin` (passwordless sudo) |
-| `homelab-aap-api` | Red Hat Ansible Automation Platform | 20, 50, 70 | API token so jobs can update AAP itself |
+| `homelab-aap-api` | Red Hat Ansible Automation Platform | 20, 50, 70 | API token so jobs can update AAP itself. Host must be `https://host.containers.internal` (see section 11) |
 | `vault-ssh-signer` | HashiCorp Vault Signed SSH | `rhel-svc-aap-signed` | Vault URL, AppRole role_id + secret_id, Vault CA cert |
 | `rhel-svc-aap-signed` | Machine | 70, and any future job | `svc_aap` + private key; certificate fetched from Vault at launch |
 
@@ -292,6 +292,7 @@ settings, so job 30 sets hostnames instead.
 | Every AAP job failed: `lsetxattr ... operation not permitted` | Relabel of a root-owned folder on each job | Plain mount; folder owned by `aap` and labelled `container_file_t` |
 | Seed: "Playbook not found for project" | Project never synced successfully; seed did not resync | Seed now always syncs the project first |
 | Job 20: `terraform init` timed out on registry.terraform.io | Registry unreachable from the job container | Providers fetched from releases.hashicorp.com into a filesystem mirror |
+| Job 20: AAP API timed out from the job (`aap.lab.local`) | Rootless Podman 5.6 gives containers the host's IP, so the host IP loops back; AAP host `/etc/hosts` also maps the name to 127.0.0.1 and a stale .33 | `homelab-aap-api` host set to `https://host.containers.internal` |
 | Job 10: "could not find a supported CD ISO creation command" | No xorriso/mkisofs in the AAP execution environment | Template existence checked first via the vCenter API; pycdlib-based `mkisofs` stand-in for rebuilds |
 
 ## 12. Open items
@@ -303,3 +304,4 @@ settings, so job 30 sets hostnames instead.
 - [ ] DHCP reservations for the three lab VMs.
 - [ ] Rebuild `tmpl-rhel10` so its `labadmin` password matches the reset one.
 - [ ] Optional: add `lab-*` A records to AD DNS.
+- [ ] Clean up `/etc/hosts` on the AAP VM (`aap.lab.local` on 127.0.0.1 and stale 192.168.1.33; real IP 192.168.1.58).
