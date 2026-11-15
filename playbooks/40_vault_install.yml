@@ -20,6 +20,16 @@
         gpgkey: https://rpm.releases.hashicorp.com/gpg
         gpgcheck: true
 
+    # RHEL 10's dnf does not auto-import signing keys when Ansible installs
+    # packages, so import Red Hat's and HashiCorp's keys explicitly.
+    - name: Package signing keys
+      ansible.builtin.rpm_key:
+        key: "{{ item }}"
+        state: present
+      loop:
+        - /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+        - https://rpm.releases.hashicorp.com/gpg
+
     - name: Packages
       ansible.builtin.dnf:
         name: [vault, openssl, curl]
