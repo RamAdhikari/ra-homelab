@@ -1,4 +1,5 @@
-# Windows Server 2022 Standard (Desktop Experience) template for the home lab.
+# Windows Server 2022 Standard (Desktop Experience) template for the home lab,
+# from en-us_windows_server_2022_updated_nov_2024_x64.iso on LocalDS.
 # BIOS boot; the answer file and setup scripts are on a Packer-made floppy (A:),
 # so no ISO creation tool is needed in the AAP job container.
 # Secrets: PKR_VAR_vsphere_password, PKR_VAR_build_password (Administrator password).
@@ -28,6 +29,11 @@ variable "os_iso_path" { type = string }
 variable "tools_iso_path" {
   type    = string
   default = "[] /vmimages/tools-isoimages/windows.iso"
+}
+variable "product_key" {
+  description = "Setup key. Default: Microsoft's public KMS client setup key for Windows Server 2022 Standard"
+  type        = string
+  default     = "VDYBN-27WPP-V4HQT-9VMD4-VMK7H"
 }
 variable "vm_name" {
   type    = string
@@ -91,6 +97,7 @@ source "vsphere-iso" "win2022" {
     "autounattend.xml" = templatefile("${path.root}/autounattend.xml.pkrtpl", {
       # XML-escape the password for the answer file
       admin_password = replace(replace(replace(var.build_password, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+      product_key    = var.product_key
     })
   }
 

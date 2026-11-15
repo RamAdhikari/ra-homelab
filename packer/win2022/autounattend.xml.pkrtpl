@@ -72,9 +72,9 @@
             <UserData>
                 <!-- Product Key from http://technet.microsoft.com/en-us/library/jj612867.aspx -->
                 <ProductKey>
-                    <!-- Do not uncomment the Key element if you are using trial ISOs -->
-                    <!-- You must uncomment the Key element (and optionally insert your own key) if you are using retail or volume license ISOs -->
-                    <!-- <Key>WX4NM-KYWYW-QJJR4-XV3QB-6VM33</Key> -->
+                    <!-- Release (non-evaluation) media needs a key to install unattended. Default:
+                         Microsoft's public KMS client setup key for Server 2022 Standard (installs, not activated). -->
+                    <Key>${product_key}</Key>
                     <WillShowUI>OnError</WillShowUI>
                 </ProductKey>
                 <AcceptEula>true</AcceptEula>

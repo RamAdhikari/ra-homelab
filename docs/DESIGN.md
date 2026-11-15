@@ -195,7 +195,7 @@ only if the previous one succeeded, and every step is safe to rerun.
 | # | Job template | Runs on | What it does | Rerun behaviour |
 | --- | --- | --- | --- | --- |
 | 10 | build RHEL 10 template | job container | Packer builds `tmpl-rhel10` | Skips if it exists; `rebuild_template=true` replaces it |
-| 11 | build Windows 2022 template | job container | Packer builds `tmpl-win2022` from the evaluation ISO (answer file on a floppy) | Skips if it exists; `rebuild_template=true` replaces it |
+| 11 | build Windows 2022 template | job container | Packer builds `tmpl-win2022` from the Server 2022 ISO on LocalDS (answer file on a floppy) | Skips if it exists; `rebuild_template=true` replaces it |
 | 20 | provision VMs | job container | Terraform clones Vault + 2 RHEL VMs; writes IPs to the inventory | Plans first, applies only changes |
 | 21 | provision Windows VMs | job container | Terraform clones 2 Windows VMs from `tmpl-win2022`, sets the local Administrator password, joins `homelab.local`; writes IPs and WinRM settings to the inventory | Plans first, applies only changes |
 | 30 | bootstrap hosts | Vault + RHEL VMs | Hostname, `/etc/hosts`, Red Hat registration, Red Hat release key 4 | Registers only if not registered |
@@ -301,7 +301,8 @@ networking), so job 30 sets hostnames.
 
 | Setting | Value |
 | --- | --- |
-| Source ISO | Windows Server 2022 evaluation ISO in the `LocalDS` content library folder |
+| Source ISO | `[LocalDS] en-us_windows_server_2022_updated_nov_2024_x64.iso` (release media) |
+| Product key | Microsoft's public KMS client setup key for Server 2022 Standard; installs unattended, not activated (lab) |
 | Edition | Windows Server 2022 Standard (Desktop Experience) |
 | VM | 2 vCPU, 4 GB RAM, 40 GB thin, BIOS, LSI Logic SAS, VMXNET3 |
 | Install | `autounattend.xml` and setup scripts on a Packer-made floppy (A:); VMware Tools from the ESXi tools ISO (E:) |
@@ -424,6 +425,7 @@ share, self-signed TLS, whole-subnet AppRole binding, `0777` state folder,
 | Job 40: "Public key for openssl ... is not installed" | RHEL 10.1 ISO lacks Red Hat release key 4 (ML-DSA-87+Ed448), which signs current updates (RHEL-144980) | Job 30 upgrades to `redhat-release-10.1-18` (old-key signed, carries key 4), falls back to `--nogpgcheck` for that package only, imports the key file |
 | Job 60: permission denied on `vault.crt` | `/opt/vault/tls` readable only by `vault` | That play uses `become` |
 | Job 11: Windows VM stuck on a black screen with a cursor | BIOS tried to boot the non-bootable answer-file floppy | `boot_order = "disk,cdrom"` |
+| Job 11: still a black screen; Windows CD not connected | Content-library ISO path no longer existed | Build uses `en-us_windows_server_2022_updated_nov_2024_x64.iso` on LocalDS, with a setup key |
 | Job 21: `Win2022-VM01.vmdk was not found` | `Win2022-VM-Template` points at a deleted disk | New template `tmpl-win2022` built by job 11 |
 
 ## 14. Open items
