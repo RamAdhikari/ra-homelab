@@ -49,11 +49,14 @@ works without a custom image.
 
 3. **Terraform state directory on the AAP execution node:**
    ```bash
-   ssh <aap-host> 'sudo install -d -m 0777 /var/lib/homelab-tfstate'
+   ssh -t aap@aap.lab.local 'sudo install -d -m 0777 -o aap -g aap /var/lib/homelab-tfstate &&
+     sudo semanage fcontext -a -t container_file_t "/var/lib/homelab-tfstate(/.*)?" &&
+     sudo restorecon -Rv /var/lib/homelab-tfstate'
    ```
+   The SELinux label lets job containers use the folder without relabelling it.
    Then copy the state of the VMs that already exist, so AAP manages them instead of cloning duplicates:
    ```bash
-   scp ~/ra-homelab/terraform/rhel-vms/terraform.tfstate <aap-host>:/var/lib/homelab-tfstate/rhel-vms.tfstate
+   scp ~/ra-homelab/terraform/rhel-vms/terraform.tfstate aap@aap.lab.local:/var/lib/homelab-tfstate/rhel-vms.tfstate
    ```
    `0777` is a lab shortcut that avoids UID mapping issues with rootless job containers.
 

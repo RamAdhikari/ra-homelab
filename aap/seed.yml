@@ -66,11 +66,14 @@
         validate_certs: false
       register: job_settings
 
-    # AAP accepts z, O, ro, rw. Lower-case z = shared SELinux label.
+    # Plain bind mount, no :z/:Z. A relabel option makes podman lsetxattr the
+    # host folder on every job (project syncs too) and fails unless the job user
+    # owns it. Instead the folder is pre-labelled container_file_t on the AAP
+    # host (README, one-time setup step 3). Older entries for this path are replaced.
     - name: Expose the Terraform state directory to job containers
       awx.awx.settings:
         name: AWX_ISOLATION_SHOW_PATHS
-        value: "{{ (job_settings.json.AWX_ISOLATION_SHOW_PATHS | default([], true) + [tfstate_dir ~ ':' ~ tfstate_dir ~ ':z']) | unique }}"
+        value: "{{ (job_settings.json.AWX_ISOLATION_SHOW_PATHS | default([], true) | reject('match', '^' ~ tfstate_dir ~ '(:|$)') | list) + [tfstate_dir ~ ':' ~ tfstate_dir] }}"
 
     - name: Inventory
       awx.awx.inventory:
