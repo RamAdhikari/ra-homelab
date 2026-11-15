@@ -66,10 +66,11 @@
         validate_certs: false
       register: job_settings
 
+    # AAP accepts z, O, ro, rw. Lower-case z = shared SELinux label.
     - name: Expose the Terraform state directory to job containers
       awx.awx.settings:
         name: AWX_ISOLATION_SHOW_PATHS
-        value: "{{ (job_settings.json.AWX_ISOLATION_SHOW_PATHS | default([], true) + [tfstate_dir ~ ':' ~ tfstate_dir ~ ':Z']) | unique }}"
+        value: "{{ (job_settings.json.AWX_ISOLATION_SHOW_PATHS | default([], true) + [tfstate_dir ~ ':' ~ tfstate_dir ~ ':z']) | unique }}"
 
     - name: Inventory
       awx.awx.inventory:
