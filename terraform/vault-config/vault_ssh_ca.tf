@@ -21,6 +21,12 @@ variable "aap_controller_cidrs" {
   default     = ["192.168.1.0/24"] # lab: whole subnet. Tighten to the AAP host /32.
 }
 
+variable "ssh_cert_ttl" {
+  description = "Lifetime of each signed SSH certificate, in seconds. AAP gets a new one per job."
+  type        = number
+  default     = 3600
+}
+
 resource "vault_mount" "ssh" {
   path        = "ssh-client-signer"
   type        = "ssh"
@@ -44,8 +50,8 @@ resource "vault_ssh_secret_backend_role" "aap_linux" {
   allowed_extensions      = "permit-pty"
   default_extensions      = { "permit-pty" = "" }
   key_id_format           = "aap-{{token_display_name}}-{{public_key_hash}}"
-  ttl                     = "7200"
-  max_ttl                 = "14400"
+  ttl                     = var.ssh_cert_ttl
+  max_ttl                 = var.ssh_cert_ttl
 }
 
 resource "vault_policy" "aap_ssh_sign" {

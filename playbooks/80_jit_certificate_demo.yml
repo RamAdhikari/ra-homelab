@@ -1,0 +1,51 @@
+# Runs on the RHEL targets with the Vault-signed credential and shows the
+# just-in-time certificate AAP fetched for this job: its key ID, principal and
+# validity window, and the matching login record on each host.
+# Credentials: rhel-svc-aap-signed (only)
+- name: Certificate issued for this job
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read the certificate from the job's ssh-agent
+      ansible.builtin.shell: |
+        set -o pipefail
+        ssh-add -L | grep -- '-cert-v01@openssh.com' | head -1 | ssh-keygen -L -f /dev/stdin
+      register: job_cert
+      changed_when: false
+      failed_when: false
+
+    - name: Certificate details (Key ID, Principals, Valid)
+      ansible.builtin.debug:
+        msg: "{{ job_cert.stdout_lines | select('search', 'Type:|Key ID:|Serial:|Valid:|Principals:|svc_aap|permit') | map('trim') | list
+                 if job_cert.rc == 0 else
+                 'Certificate not visible in the job ssh-agent; the host login records below still show it.' }}"
+
+- name: Do work on the targets as svc_aap
+  hosts: rhel_targets
+  gather_facts: false
+  tasks:
+    - name: Who am I
+      ansible.builtin.command: id -un
+      register: whoami
+      changed_when: false
+
+    - name: Privilege escalation works
+      ansible.builtin.command: id -u
+      become: true
+      register: root_uid
+      changed_when: false
+
+    - name: Login record for this job's certificate
+      ansible.builtin.shell: |
+        journalctl -u sshd --since "-10 min" --no-pager -o cat | grep -E 'Accepted (certificate|publickey) .*svc_aap|ID aap-' | tail -2
+      become: true
+      register: login_record
+      changed_when: false
+      failed_when: false
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "Logged in as {{ whoami.stdout }}, sudo uid {{ root_uid.stdout }}"
+          - "{{ login_record.stdout_lines | default(['no sshd record found in the last 10 minutes']) }}"

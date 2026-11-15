@@ -48,6 +48,7 @@
         tf_state: "{{ tfstate_dir }}/vault-config.tfstate"
         tf_vars:
           - "aap_controller_cidrs={{ aap_controller_cidrs | to_json }}"
+          - "ssh_cert_ttl={{ ssh_cert_ttl }}"
         tf_env:
           VAULT_ADDR: "{{ vault_addr }}"
           VAULT_TOKEN: "{{ vault_root_token }}"

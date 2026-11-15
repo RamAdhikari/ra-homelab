@@ -12,7 +12,7 @@
 Red Hat Ansible Automation Platform (AAP) connects to RHEL hosts with short-lived
 SSH certificates signed by a HashiCorp Vault SSH certificate authority, instead
 of a long-lived key in `authorized_keys`. AAP fetches a fresh certificate (valid
-2 hours) from Vault every time a job starts; each host trusts the Vault CA's
+1 hour) from Vault every time a job starts; each host trusts the Vault CA's
 public key and nothing else changes on it.
 
 The whole lab, from the RHEL template to the final login test, is built by one
@@ -28,7 +28,7 @@ the AAP objects.
 ### Non-goals
 
 - Production-grade Vault (HA, auto-unseal with a KMS or HSM, CA-issued TLS).
-  Section 9 lists what changes for production.
+  Section 11 lists what changes for production.
 - Windows hosts, host-key signing, human SSH access.
 
 ## 2. Lab environment
@@ -78,7 +78,7 @@ sequenceDiagram
   J->>V: AppRole login (role_id + secret_id)
   V-->>J: Vault token (10 min, policy aap-ssh-sign)
   J->>V: POST ssh-client-signer/sign/aap-linux<br/>public key, principal svc_aap
-  V-->>J: Signed certificate (2 h)
+  V-->>J: Signed certificate (1 h)
   J->>H: SSH as svc_aap with private key + certificate
   H->>H: Check signature against CA key,<br/>principal = svc_aap, not expired
   H-->>J: Login accepted
@@ -129,7 +129,7 @@ collections/requirements.yml   awx.awx, installed by AAP on project sync
 | `homelab-vcenter` | VMware vCenter | 10, 20 | `VMWARE_HOST/USER/PASSWORD` for Packer and Terraform |
 | `homelab-lab-secrets` | Homelab lab secrets | 10, 30 | `PKR_VAR_build_password`, `RHSM_USERNAME`, `RHSM_PASSWORD` |
 | `homelab-labadmin` | Machine | 30, 40, 50, 60 | SSH as `labadmin` (passwordless sudo) |
-| `homelab-aap-api` | Red Hat Ansible Automation Platform | 20, 50, 70 | API token so jobs can update AAP itself. Host must be `https://host.containers.internal` (see section 11) |
+| `homelab-aap-api` | Red Hat Ansible Automation Platform | 20, 50, 70 | API token so jobs can update AAP itself. Host must be `https://host.containers.internal` (see section 12) |
 | `vault-ssh-signer` | HashiCorp Vault Signed SSH | `rhel-svc-aap-signed` | Vault URL, AppRole role_id + secret_id, Vault CA cert |
 | `rhel-svc-aap-signed` | Machine | 70, and any future job | `svc_aap` + private key; certificate fetched from Vault at launch |
 
@@ -219,7 +219,7 @@ settings, so job 30 sets hostnames instead.
 | Boot | `vault-lab-unseal.service` unseals from that file after a reboot (lab only) |
 | Audit | File device, `/var/log/vault/audit.log` |
 | SSH mount | `ssh-client-signer`, CA key generated inside Vault |
-| Signing role | `aap-linux`: user certs only, principal `svc_aap`, `permit-pty`, `rsa-sha2-256`, TTL 2 h, max 4 h, key ID `aap-<token>-<keyhash>` |
+| Signing role | `aap-linux`: user certs only, principal `svc_aap`, `permit-pty`, `rsa-sha2-256`, TTL and max TTL 1 h (`ssh_cert_ttl` in `vars/lab.yml`), key ID `aap-<token>-<keyhash>` |
 | Policy | `aap-ssh-sign`: `create`, `update` on `ssh-client-signer/sign/aap-linux` only |
 | AAP auth | AppRole `aap-controller`: token 10 min (max 20), secret_id 90 days, both bound to `192.168.1.0/24` |
 
@@ -231,7 +231,7 @@ settings, so job 30 sets hostnames instead.
   `.gitignore` excludes state, keys, `.env` and plans.
 - **Least privilege:** AAP's Vault token can sign for one role and one principal; a
   leaked AppRole secret_id is useless outside the bound subnet.
-- **Short-lived access:** certificates expire after 2 hours; removing the AppRole or
+- **Short-lived access:** certificates expire after 1 hour; removing the AppRole or
   the role stops all new AAP access immediately.
 - **Traceability:** every signing is in the Vault audit log; the key ID appears in
   each host's sshd log.
@@ -239,7 +239,26 @@ settings, so job 30 sets hostnames instead.
   share, self-signed TLS, whole-subnet CIDR binding, `0777` state folder,
   `NOPASSWD: ALL` sudo for `svc_aap`, TLS verification off towards AAP and vCenter.
 
-## 8. Operations
+## 8. Just-in-time certificates
+
+| Property | How it is achieved |
+| --- | --- |
+| Issued per job | The Machine credential's certificate field is a Vault lookup, run by AAP at every job launch |
+| Short-lived | Signing role TTL = max TTL = `ssh_cert_ttl` (3600 s); Vault refuses anything longer |
+| Not kept after the job | AAP writes the key and certificate only into the job's temporary private data directory and ssh-agent, which are destroyed when the job ends |
+| One principal | The certificate is valid only for `svc_aap` |
+| Traceable | Vault audit log records each signing; each host's sshd log records the certificate's key ID and serial |
+
+Job template **homelab 80 - run job with JIT certificate** (`playbooks/80_jit_certificate_demo.yml`)
+uses only `rhel-svc-aap-signed`. It prints the certificate issued for that run
+(key ID, serial, principal, validity window) and the matching sshd login record
+on each target.
+
+SSH certificates cannot be revoked one by one without a revocation list (KRL),
+so the short TTL is the control. Jobs that run longer than the TTL keep their
+existing connections but cannot open new ones; raise `ssh_cert_ttl` for those.
+
+## 9. Operations
 
 | Task | How |
 | --- | --- |
@@ -253,7 +272,7 @@ settings, so job 30 sets hostnames instead.
 | Rotate the CA | `TrustedUserCAKeys` accepts several keys: add the new CA key on hosts, switch the mount, then remove the old key |
 | vCenter certificate | Machine SSL certificate reissued 2026-11-12, valid 2 years: renew before November 2028 |
 
-## 9. Production differences
+## 10. Production differences
 
 | Lab | Production |
 | --- | --- |
@@ -266,7 +285,7 @@ settings, so job 30 sets hostnames instead.
 | State on the AAP host | Remote backend with locking (S3 + DynamoDB, Terraform Cloud) |
 | Packer/Terraform downloaded per job | Custom execution environment with pinned tools |
 
-## 10. Decisions
+## 11. Decisions
 
 | Decision | Choice | Reason |
 | --- | --- | --- |
@@ -278,7 +297,7 @@ settings, so job 30 sets hostnames instead.
 | Inventory | Static hosts updated by job 20 | No DNS for lab VMs; avoids the vCenter inventory plugin's DNS dependency |
 | Kickstart delivery | CD + explicit `inst.ks=` | OEMDRV auto-detection did not fire |
 
-## 11. Problems found and fixed
+## 12. Problems found and fixed
 
 | Problem | Cause | Fix |
 | --- | --- | --- |
@@ -297,7 +316,7 @@ settings, so job 30 sets hostnames instead.
 | Job 40: "Public key for openssl ... is not installed" | RHEL 10.1 ISO ships an older `redhat-release` without Red Hat release key 4 (ML-DSA-87+Ed448), which signs current updates (RHEL-144980) | Job 30 upgrades to `redhat-release-10.1-18` (old-key signed, ships key 4), falls back to `--nogpgcheck` for that one package, then imports the key file |
 | Job 10: "could not find a supported CD ISO creation command" | No xorriso/mkisofs in the AAP execution environment | Template existence checked first via the vCenter API; pycdlib-based `mkisofs` stand-in for rebuilds |
 
-## 12. Open items
+## 13. Open items
 
 - [ ] First end-to-end workflow run.
 - [ ] Real Red Hat password in `homelab-lab-secrets` (job 30 needs it).

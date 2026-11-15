@@ -135,6 +135,27 @@
       loop_control:
         label: "{{ item.name }}"
 
+    # Demo template that uses only the Vault-signed credential. That credential
+    # is created by job 50, so this is skipped until it exists.
+    - name: Does the Vault-signed machine credential exist yet
+      ansible.builtin.uri:
+        url: "{{ controller_api }}/credentials/?name={{ machine_credential | urlencode }}"
+        headers: "{{ api_headers }}"
+        validate_certs: false
+      register: signed_cred
+
+    - name: Job template that runs on the targets with a just-in-time certificate
+      awx.awx.job_template:
+        name: "homelab 80 - run job with JIT certificate"
+        organization: "{{ controller_org }}"
+        project: "{{ project_name }}"
+        inventory: "{{ lab_inventory }}"
+        playbook: playbooks/80_jit_certificate_demo.yml
+        credentials: ["{{ machine_credential }}"]
+        limit: rhel_targets
+        state: present
+      when: signed_cred.json.count | int > 0
+
     - name: End-to-end workflow
       awx.awx.workflow_job_template:
         name: "{{ workflow_name }}"
