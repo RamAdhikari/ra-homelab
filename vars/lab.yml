@@ -37,3 +37,6 @@ aap_ssh_user: svc_aap
 aap_controller_cidrs: ["192.168.1.0/24"]
 ssh_cert_ttl: 7200   # seconds; each AAP job gets a fresh certificate valid this long
 vault_init_file: /root/vault-init.json
+
+# Home lab Vault (Docker on the Mac, ra-homelab/vault): central secrets store for every project
+homelab_vault_url: https://192.168.1.10:8200

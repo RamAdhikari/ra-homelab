@@ -1,0 +1,26 @@
+services:
+  vault:
+    image: hashicorp/vault:${VAULT_VERSION:-2.2.1}
+    container_name: vault
+    command: server
+    restart: unless-stopped
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_ADDR: https://127.0.0.1:8200
+      VAULT_CACERT: /vault/tls/ca.crt
+    volumes:
+      - ./config:/vault/config:ro
+      - ./tls:/vault/tls:ro
+      - vault-data:/vault/file
+      - vault-logs:/vault/logs
+    healthcheck:
+      # exit 0 = unsealed, 2 = sealed (still healthy as a process), 1 = error
+      test: ["CMD-SHELL", "vault status >/dev/null 2>&1; [ $$? -ne 1 ]"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  vault-data:
+  vault-logs:

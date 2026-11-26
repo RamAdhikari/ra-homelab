@@ -1,0 +1,9 @@
+.env
+tls/*.key
+tls/*.srl
+tls/*.csr
+backups/
+*.init.json
+terraform/.terraform/
+terraform/terraform.tfstate*
+terraform/*.tfvars

@@ -1,0 +1,46 @@
+# Unseals the home lab Vault (Docker on the Mac) if it is sealed; does nothing otherwise.
+# Runs first in workflows whose jobs read secrets from Vault: AAP resolves Vault lookups
+# before a job's first task, so a job cannot unseal Vault for itself.
+# Uses no Vault lookups. Credential: homelab-ansible-vault (decrypts vars/vault_unseal.yml).
+- name: Unseal the home lab Vault
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars/lab.yml
+    - ../vars/vault_unseal.yml
+  vars:
+    vault_ca: "{{ playbook_dir }}/../vault/tls/ca.crt"
+  tasks:
+    - name: Seal status
+      ansible.builtin.uri:
+        url: "{{ homelab_vault_url }}/v1/sys/seal-status"
+        ca_path: "{{ vault_ca }}"
+      register: seal
+
+    - name: Already unsealed
+      ansible.builtin.debug:
+        msg: "Vault at {{ homelab_vault_url }} is unsealed; nothing to do."
+      when: not seal.json.sealed
+
+    - name: Unseal with the stored keys
+      ansible.builtin.uri:
+        url: "{{ homelab_vault_url }}/v1/sys/unseal"
+        method: PUT
+        body_format: json
+        body:
+          key: "{{ item }}"
+        ca_path: "{{ vault_ca }}"
+      loop: "{{ vault_unseal_keys[: seal.json.t] }}"
+      loop_control:
+        label: key
+      no_log: true
+      when: seal.json.sealed
+
+    - name: Check it is unsealed
+      ansible.builtin.uri:
+        url: "{{ homelab_vault_url }}/v1/sys/seal-status"
+        ca_path: "{{ vault_ca }}"
+      register: after
+      failed_when: after.json.sealed
+      when: seal.json.sealed

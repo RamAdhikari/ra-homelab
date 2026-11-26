@@ -33,6 +33,7 @@
       - { name: homelab-labadmin, type: Machine (username labadmin + password) }
       - { name: homelab-aap-api, type: Red Hat Ansible Automation Platform (host https://host.containers.internal + token) }
       - { name: homelab-domain-join, type: Homelab domain join }
+      - { name: homelab-ansible-vault, type: Vault (password from vault/scripts/make-unseal-vars.sh; no Vault Identifier) }
     # The workflow runs these in this order.
     job_templates:
       - { id: build, name: "homelab 10 - build RHEL 10 template", playbook: playbooks/10_build_template.yml, creds: [homelab-vcenter, homelab-lab-secrets], ask_vars: true }
@@ -45,6 +46,10 @@
       - { id: ca_trust, name: "homelab 60 - RHEL trust SSH CA", playbook: playbooks/60_ssh_ca_trust.yml, creds: [homelab-labadmin] }
       - { id: win_trust, name: "homelab 61 - Windows OpenSSH and trust SSH CA", playbook: playbooks/61_windows_ssh_ca_trust.yml, creds: [homelab-lab-secrets] }
       - { id: verify, name: "homelab 70 - verify signed SSH (RHEL and Windows)", playbook: playbooks/70_verify.yml, creds: [homelab-aap-api] }
+
+    # Service templates: not part of this repo's workflow; other workflows run them.
+    service_templates:
+      - { name: "homelab 05 - unseal Vault", playbook: playbooks/05_vault_unseal.yml, creds: [homelab-ansible-vault] }
 
     # Test templates that use only a Vault-signed credential; created once job 50
     # has made that credential.
@@ -198,6 +203,19 @@
         ask_variables_on_launch: "{{ item.ask_vars | default(false) }}"
         state: present
       loop: "{{ job_templates }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Service job templates
+      awx.awx.job_template:
+        name: "{{ item.name }}"
+        organization: "{{ controller_org }}"
+        project: "{{ project_name }}"
+        inventory: "{{ lab_inventory }}"
+        playbook: "{{ item.playbook }}"
+        credentials: "{{ item.creds }}"
+        state: present
+      loop: "{{ service_templates }}"
       loop_control:
         label: "{{ item.name }}"
 
